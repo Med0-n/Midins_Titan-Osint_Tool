@@ -1,52 +1,45 @@
-# **🛡️ MIDINS TITAN - OSINT Tool**
-MIDINS TITAN is a tactical visual investigation platform designed to transform raw data into actionable intelligence mapping. It acts as a high-performance "Digital War Room" for modern investigators, analysts, and cybersecurity professionals.
+# 🛡️ MIDINS TITAN - OSINT Tool
 
-## **🦅 Why MIDINS TITAN?** 
-In the world of OSINT, information is everywhere, but intelligence is rare. MIDINS TITAN is not just another browser tool; it is a tactical workspace designed to bridge the gap between raw data collection and visual proof. It turns the chaos of a digital investigation into a structured, weaponized map of evidence.
+![Version](https://img.shields.io/badge/version-1.0.0-blue.svg)
+![Python](https://img.shields.io/badge/python-3.x-green.svg)
+![Status](https://img.shields.io/badge/status-stable-success.svg)
+![Security](https://img.shields.io/badge/Privacy-Local--First-orange.svg)
+![License](https://img.shields.io/badge/License-CC%20BY--SA%204.0-lightgrey.svg)
 
-"Give a face to the data. Pierce through the digital fog."
+**MIDINS TITAN** is a lightweight, local-first OSINT investigation board. It is designed for investigators who need a fast, reliable, and private way to map digital evidence without the complexity of bloated software.
 
-## **✨ Key Features**
+---
 
-🕸️ Relational Mapping & Logic (TITAN Engine)
-Smart Nodes: Create and resize custom shapes (Rectangles, Circles, Diamonds) to represent entities, targets, or events.
+## 🦅 The Power of Simplicity
 
-Annotated Connections: Arrows don't just point; they explain. Add editable labels to your links (e.g., "Owner of", "Linked IP", "Suspicious Transaction").
+In OSINT, speed and clarity are everything. **MIDINS TITAN** focuses on what actually works: **Fast collection, clear visualization, and total privacy.** No useless features, just pure efficiency.
 
-Mind-Map Containers: Group related clues into dynamic "Folder" nodes that move and scale together, maintaining structural integrity.
+> **"Focus on the investigation, not the tool."**
 
-## **🛡️ Security & Sovereignty**
-Local-First Privacy: No data ever leaves your machine. No Cloud, no tracking, no external API logs.
+---
 
-Bilingual Command: Switch the entire interface between English and French instantly for international reporting.
+## ✨ Key Features
 
-Robust Stability: Built with proactive error handling (Try/Catch) to ensure your investigation board never crashes during critical moments.
+### 🔍 Smart Intelligence Extraction
+* **Auto-Scraping:** Drop a URL, and TITAN instantly pulls the **Site Title** and **Official Logo** to build your evidence card.
+* **Dynamic Orbiting (Levitation):** Add associated keywords (usernames, project names, aliases) to a site node. They will **levitate around the main target**, creating a visual cloud of related intelligence.
 
-## **🚀 Installation & Launch**
-1. Prerequisites
-Ensure you have Python 3.10 or higher installed.
+### 🕸️ Advanced Visual Mapping
+* **Smart Tools:** Access a wide array of customizable tools via the left sidebar. Use the **(s%)** search term to filter and deploy specialized investigation modules instantly.
+* **Relational Links:** Connect points of interest with interactive lines to visualize networks and infrastructures.
+* **Undo/Redo System:** Made a mistake? Use the new **Undo/Redo** functions to navigate through your investigation steps without losing data.
+* **Stable Canvas:** A fluid workspace designed to organize findings without the performance drops of heavy engines.
 
-2. Setup
-Clone the repository and install the professional dependencies:
+### 🛡️ Privacy & Sovereignty
+* **100% Local:** Runs on a local Flask server. Your data, your targets, and your research **never** touch the cloud.
+* **Zero Tracking:** No analytics, no external logs. Total confidentiality for sensitive investigations.
 
-Bash
+---
+
+## 🚀 Installation & Launch
+
+### 1. Prerequisites
+Make sure you have Python installed. Install the stable dependencies:
+
+```bash
 pip install -r requirements.txt
-3. Fast Launch (Windows)
-Double-click the included automation file: LANCER_TITAN.bat This script automatically detects your project folder, starts the Flask server, and opens the interface in your default browser.
-
-4. Manual Launch
-Run the following command: python app.py Access your board at: http://127.0.0.1:5000
-
-## **🛠️ Roadmap**
-[ ] PDF/PNG Export: Generate high-resolution reports of your graph.
-
-[ ] Tactical Dark Mode: High-contrast theme for night operations.
-
-[ ] Standalone EXE: Native Windows executable for zero-dependency deployment.
-
-[ ] Entity Correlation: Automatic highlighting of matching email/username patterns.
-
-## **📜 License**
-CC BY-SA 4.0
-
-MIDINS TITAN: Multimedia Intelligence & Digital Investigation Network System. Built for clarity, powered by truth.
