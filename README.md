@@ -1,7 +1,7 @@
 # **🛡️ MIDINS TITAN - OSINT Tool**
 MIDINS TITAN is a tactical visual investigation platform designed to transform raw data into actionable intelligence mapping. It acts as a high-performance "Digital War Room" for modern investigators, analysts, and cybersecurity professionals.
 
-## **🦅 Why MIDINS TITAN? **
+## **🦅 Why MIDINS TITAN?** 
 In the world of OSINT, information is everywhere, but intelligence is rare. MIDINS TITAN is not just another browser tool; it is a tactical workspace designed to bridge the gap between raw data collection and visual proof. It turns the chaos of a digital investigation into a structured, weaponized map of evidence.
 
 "Give a face to the data. Pierce through the digital fog."
@@ -15,7 +15,7 @@ Annotated Connections: Arrows don't just point; they explain. Add editable label
 
 Mind-Map Containers: Group related clues into dynamic "Folder" nodes that move and scale together, maintaining structural integrity.
 
-🛡️ Security & Sovereignty
+## **🛡️ Security & Sovereignty**
 Local-First Privacy: No data ever leaves your machine. No Cloud, no tracking, no external API logs.
 
 Bilingual Command: Switch the entire interface between English and French instantly for international reporting.
@@ -37,7 +37,7 @@ Double-click the included automation file: LANCER_TITAN.bat This script automati
 4. Manual Launch
 Run the following command: python app.py Access your board at: http://127.0.0.1:5000
 
-## *🛠️ Roadmap* 
+## **🛠️ Roadmap**
 [ ] PDF/PNG Export: Generate high-resolution reports of your graph.
 
 [ ] Tactical Dark Mode: High-contrast theme for night operations.
@@ -46,7 +46,7 @@ Run the following command: python app.py Access your board at: http://127.0.0.1:
 
 [ ] Entity Correlation: Automatic highlighting of matching email/username patterns.
 
-### *📜 License*
+## **📜 License**
 This project is distributed under the MIT License. See the LICENSE file for more details.
 
 MIDINS TITAN: Multimedia Intelligence & Digital Investigation Network System. Built for clarity, powered by truth.
