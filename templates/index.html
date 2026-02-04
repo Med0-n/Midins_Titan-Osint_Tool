@@ -1,0 +1,1652 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MIDINS TITAN - OSINT Case Management</title>
+    
+    <!-- Vis.js Network -->
+    <script src="https://unpkg.com/vis-network@9.1.6/dist/vis-network.min.js"></script>
+    <link href="https://unpkg.com/vis-network@9.1.6/dist/dist/vis-network.min.css" rel="stylesheet" type="text/css" />
+    
+    <!-- Google Fonts - Orbitron for the cyber look -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;500;600;700;900&family=JetBrains+Mono:wght@300;400;500&display=swap" rel="stylesheet">
+    
+    <style>
+        /* ================================
+           CSS VARIABLES & RESET
+           ================================ */
+        :root {
+            /* Primary colors */
+            --bg-deep: #0b0e14;
+            --bg-panel: #151921;
+            --bg-elevated: #1c2028;
+            --bg-hover: #232932;
+            
+            /* Accents */
+            --accent-primary: #a371f7;
+            --accent-secondary: #7c3aed;
+            --accent-glow: rgba(163, 113, 247, 0.3);
+            
+            /* Cyber colors */
+            --cyber-blue: #00d9ff;
+            --cyber-pink: #ff006e;
+            --cyber-green: #00ff88;
+            
+            /* Status colors */
+            --status-target: #ff4757;
+            --status-validated: #1dd1a1;
+            --status-info: #5f27cd;
+            
+            /* Text */
+            --text-primary: #e8eaed;
+            --text-secondary: #9ca3af;
+            --text-muted: #6b7280;
+            
+            /* Borders */
+            --border-color: rgba(163, 113, 247, 0.15);
+            --border-hover: rgba(163, 113, 247, 0.4);
+            
+            /* Shadows */
+            --shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.4);
+            --shadow-md: 0 4px 16px rgba(0, 0, 0, 0.5);
+            --shadow-lg: 0 8px 32px rgba(0, 0, 0, 0.6);
+            --shadow-glow: 0 0 20px var(--accent-glow);
+            
+            /* Transitions */
+            --transition-fast: 0.15s ease;
+            --transition-base: 0.3s ease;
+            --transition-slow: 0.5s ease;
+            
+            /* Spacing */
+            --spacing-xs: 4px;
+            --spacing-sm: 8px;
+            --spacing-md: 16px;
+            --spacing-lg: 24px;
+            --spacing-xl: 32px;
+        }
+        
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'JetBrains Mono', monospace;
+            background: var(--bg-deep);
+            color: var(--text-primary);
+            overflow: hidden;
+            height: 100vh;
+            position: relative;
+        }
+        
+        /* ================================
+           GRID BACKGROUND CYBERPUNK
+           ================================ */
+        body::before {
+            content: '';
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-image: 
+                radial-gradient(circle at 2px 2px, rgba(163, 113, 247, 0.08) 1px, transparent 0);
+            background-size: 32px 32px;
+            pointer-events: none;
+            z-index: 0;
+        }
+        
+        /* Scanline effect */
+        body::after {
+            content: '';
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: linear-gradient(
+                to bottom,
+                transparent 50%,
+                rgba(163, 113, 247, 0.02) 50%
+            );
+            background-size: 100% 4px;
+            pointer-events: none;
+            z-index: 1;
+            animation: scanline 8s linear infinite;
+        }
+        
+        @keyframes scanline {
+            0% { transform: translateY(0); }
+            100% { transform: translateY(4px); }
+        }
+        
+        /* ================================
+           MAIN LAYOUT
+           ================================ */
+        .app-container {
+            display: flex;
+            height: 100vh;
+            position: relative;
+            z-index: 2;
+        }
+        
+        /* ================================
+           HEADER BAR
+           ================================ */
+        .header-bar {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 60px;
+            background: var(--bg-panel);
+            border-bottom: 1px solid var(--border-color);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 0 var(--spacing-lg);
+            z-index: 1000;
+            box-shadow: var(--shadow-md);
+        }
+        
+        .logo-section {
+            display: flex;
+            align-items: center;
+            gap: var(--spacing-md);
+        }
+        
+        .logo {
+            font-family: 'Orbitron', sans-serif;
+            font-size: 24px;
+            font-weight: 900;
+            background: linear-gradient(135deg, var(--accent-primary), var(--cyber-blue));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            letter-spacing: 2px;
+            text-shadow: 0 0 30px var(--accent-glow);
+        }
+        
+        .logo-subtitle {
+            font-size: 10px;
+            color: var(--text-secondary);
+            text-transform: uppercase;
+            letter-spacing: 3px;
+            margin-top: -4px;
+        }
+        
+        .header-actions {
+            display: flex;
+            gap: var(--spacing-sm);
+        }
+        
+        /* ================================
+           BUTTONS
+           ================================ */
+        .btn {
+            padding: 10px 20px;
+            border: 1px solid var(--border-color);
+            background: var(--bg-elevated);
+            color: var(--text-primary);
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 12px;
+            cursor: pointer;
+            transition: all var(--transition-base);
+            border-radius: 6px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            font-weight: 500;
+            position: relative;
+            overflow: hidden;
+        }
+        
+        .btn::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: -100%;
+            width: 100%;
+            height: 100%;
+            background: linear-gradient(90deg, transparent, rgba(163, 113, 247, 0.2), transparent);
+            transition: left var(--transition-slow);
+        }
+        
+        .btn:hover::before {
+            left: 100%;
+        }
+        
+        .btn:hover {
+            border-color: var(--border-hover);
+            background: var(--bg-hover);
+            transform: translateY(-1px);
+            box-shadow: var(--shadow-glow);
+        }
+        
+        .btn-primary {
+            background: var(--accent-primary);
+            border-color: var(--accent-primary);
+            color: white;
+        }
+        
+        .btn-primary:hover {
+            background: var(--accent-secondary);
+            border-color: var(--accent-secondary);
+        }
+        
+        /* ================================
+           SIDEBAR
+           ================================ */
+        .sidebar {
+            width: 350px;
+            background: var(--bg-panel);
+            border-right: 1px solid var(--border-color);
+            display: flex;
+            flex-direction: column;
+            margin-top: 60px;
+            height: calc(100vh - 60px);
+            position: relative;
+            box-shadow: var(--shadow-lg);
+        }
+        
+        .sidebar::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            right: 0;
+            width: 1px;
+            height: 100%;
+            background: linear-gradient(
+                to bottom,
+                transparent,
+                var(--accent-primary),
+                transparent
+            );
+            animation: borderGlow 3s ease-in-out infinite;
+        }
+        
+        @keyframes borderGlow {
+            0%, 100% { opacity: 0.3; }
+            50% { opacity: 1; }
+        }
+        
+        .search-section {
+            padding: var(--spacing-lg);
+            border-bottom: 1px solid var(--border-color);
+        }
+        
+        .search-label {
+            font-size: 11px;
+            text-transform: uppercase;
+            letter-spacing: 2px;
+            color: var(--text-secondary);
+            margin-bottom: var(--spacing-sm);
+            font-weight: 500;
+        }
+        
+        .master-search {
+            width: 100%;
+            padding: 12px 16px;
+            background: var(--bg-deep);
+            border: 1px solid var(--border-color);
+            border-radius: 6px;
+            color: var(--text-primary);
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 13px;
+            transition: all var(--transition-base);
+        }
+        
+        .master-search:focus {
+            outline: none;
+            border-color: var(--accent-primary);
+            box-shadow: 0 0 0 3px var(--accent-glow), var(--shadow-md);
+        }
+        
+        .master-search::placeholder {
+            color: var(--text-muted);
+        }
+        
+        .tools-section {
+            flex: 1;
+            overflow-y: auto;
+            padding: var(--spacing-lg);
+        }
+        
+        /* Custom scrollbar */
+        .tools-section::-webkit-scrollbar {
+            width: 8px;
+        }
+        
+        .tools-section::-webkit-scrollbar-track {
+            background: var(--bg-deep);
+        }
+        
+        .tools-section::-webkit-scrollbar-thumb {
+            background: var(--accent-primary);
+            border-radius: 4px;
+        }
+        
+        .tools-section::-webkit-scrollbar-thumb:hover {
+            background: var(--accent-secondary);
+        }
+        
+        .tool-category {
+            margin-bottom: var(--spacing-xl);
+        }
+        
+        .category-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: var(--spacing-md);
+            padding-bottom: var(--spacing-sm);
+            border-bottom: 1px solid var(--border-color);
+        }
+        
+        .category-title {
+            font-family: 'Orbitron', sans-serif;
+            font-size: 12px;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 2px;
+            color: var(--accent-primary);
+        }
+        
+        .category-actions {
+            display: flex;
+            gap: var(--spacing-xs);
+        }
+        
+        .icon-btn {
+            width: 24px;
+            height: 24px;
+            border: none;
+            background: transparent;
+            color: var(--text-secondary);
+            cursor: pointer;
+            transition: all var(--transition-fast);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 4px;
+        }
+        
+        .icon-btn:hover {
+            color: var(--accent-primary);
+            background: var(--bg-hover);
+        }
+        
+        .tool-item {
+            padding: 10px 12px;
+            background: var(--bg-elevated);
+            border: 1px solid var(--border-color);
+            border-radius: 6px;
+            margin-bottom: var(--spacing-sm);
+            cursor: pointer;
+            transition: all var(--transition-base);
+            position: relative;
+            overflow: hidden;
+        }
+        
+        .tool-item::before {
+            content: '';
+            position: absolute;
+            left: 0;
+            top: 0;
+            width: 3px;
+            height: 100%;
+            background: var(--accent-primary);
+            transform: scaleY(0);
+            transition: transform var(--transition-base);
+        }
+        
+        .tool-item:hover::before {
+            transform: scaleY(1);
+        }
+        
+        .tool-item:hover {
+            border-color: var(--border-hover);
+            background: var(--bg-hover);
+            transform: translateX(4px);
+        }
+        
+        .tool-name {
+            font-size: 13px;
+            font-weight: 500;
+            color: var(--text-primary);
+            margin-bottom: 4px;
+        }
+        
+        .tool-url {
+            font-size: 10px;
+            color: var(--text-muted);
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+        
+        .add-tool-btn {
+            width: 100%;
+            padding: 12px;
+            margin-top: var(--spacing-md);
+            background: var(--bg-elevated);
+            border: 1px dashed var(--border-color);
+            color: var(--text-secondary);
+            cursor: pointer;
+            transition: all var(--transition-base);
+            border-radius: 6px;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 11px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+        
+        .add-tool-btn:hover {
+            border-color: var(--accent-primary);
+            color: var(--accent-primary);
+            background: var(--bg-hover);
+        }
+        
+        /* ================================
+           CANVAS AREA
+           ================================ */
+        .canvas-container {
+            flex: 1;
+            position: relative;
+            margin-top: 60px;
+            height: calc(100vh - 60px);
+        }
+        
+        #network {
+            width: 100%;
+            height: 100%;
+            background: var(--bg-deep);
+        }
+        
+        .canvas-toolbar {
+            position: absolute;
+            top: var(--spacing-lg);
+            right: var(--spacing-lg);
+            display: flex;
+            gap: var(--spacing-sm);
+            z-index: 100;
+        }
+        
+        .toolbar-btn {
+            padding: 10px 16px;
+            background: var(--bg-panel);
+            border: 1px solid var(--border-color);
+            border-radius: 6px;
+            color: var(--text-primary);
+            cursor: pointer;
+            transition: all var(--transition-base);
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 11px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            box-shadow: var(--shadow-md);
+        }
+        
+        .toolbar-btn:hover {
+            border-color: var(--border-hover);
+            background: var(--bg-hover);
+            transform: translateY(-2px);
+            box-shadow: var(--shadow-lg);
+        }
+        
+        .toolbar-btn.active {
+            background: var(--accent-primary);
+            border-color: var(--accent-primary);
+            color: white;
+        }
+        
+        /* ================================
+           CONTEXT MENU
+           ================================ */
+        .context-menu {
+            position: fixed;
+            background: var(--bg-panel);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            padding: var(--spacing-sm);
+            box-shadow: var(--shadow-lg);
+            z-index: 10000;
+            min-width: 200px;
+            display: none;
+        }
+        
+        .context-menu.show {
+            display: block;
+        }
+        
+        .context-menu-item {
+            padding: 10px 12px;
+            cursor: pointer;
+            transition: all var(--transition-fast);
+            border-radius: 4px;
+            font-size: 12px;
+            display: flex;
+            align-items: center;
+            gap: var(--spacing-sm);
+        }
+        
+        .context-menu-item:hover {
+            background: var(--bg-hover);
+            color: var(--accent-primary);
+        }
+        
+        .context-menu-separator {
+            height: 1px;
+            background: var(--border-color);
+            margin: var(--spacing-sm) 0;
+        }
+        
+        .submenu {
+            position: absolute;
+            left: 100%;
+            top: 0;
+            background: var(--bg-panel);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            padding: var(--spacing-sm);
+            box-shadow: var(--shadow-lg);
+            display: none;
+            min-width: 150px;
+        }
+        
+        .context-menu-item:hover .submenu {
+            display: block;
+        }
+        
+        /* ================================
+           MODAL
+           ================================ */
+        .modal-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.8);
+            backdrop-filter: blur(10px);
+            z-index: 9999;
+            display: none;
+            align-items: center;
+            justify-content: center;
+        }
+        
+        .modal-overlay.show {
+            display: flex;
+            animation: fadeIn var(--transition-base);
+        }
+        
+        @keyframes fadeIn {
+            from { opacity: 0; }
+            to { opacity: 1; }
+        }
+        
+        .modal {
+            background: var(--bg-panel);
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            padding: var(--spacing-xl);
+            max-width: 600px;
+            width: 90%;
+            max-height: 80vh;
+            overflow-y: auto;
+            box-shadow: var(--shadow-lg), var(--shadow-glow);
+            animation: slideUp var(--transition-base);
+        }
+        
+        @keyframes slideUp {
+            from { transform: translateY(30px); opacity: 0; }
+            to { transform: translateY(0); opacity: 1; }
+        }
+        
+        .modal-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: var(--spacing-lg);
+            padding-bottom: var(--spacing-md);
+            border-bottom: 1px solid var(--border-color);
+        }
+        
+        .modal-title {
+            font-family: 'Orbitron', sans-serif;
+            font-size: 20px;
+            font-weight: 700;
+            color: var(--accent-primary);
+        }
+        
+        .modal-close {
+            background: none;
+            border: none;
+            color: var(--text-secondary);
+            font-size: 24px;
+            cursor: pointer;
+            transition: all var(--transition-fast);
+        }
+        
+        .modal-close:hover {
+            color: var(--accent-primary);
+            transform: rotate(90deg);
+        }
+        
+        .form-group {
+            margin-bottom: var(--spacing-lg);
+        }
+        
+        .form-label {
+            display: block;
+            margin-bottom: var(--spacing-sm);
+            font-size: 12px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            color: var(--text-secondary);
+            font-weight: 500;
+        }
+        
+        .form-input,
+        .form-select {
+            width: 100%;
+            padding: 12px 16px;
+            background: var(--bg-deep);
+            border: 1px solid var(--border-color);
+            border-radius: 6px;
+            color: var(--text-primary);
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 13px;
+            transition: all var(--transition-base);
+        }
+        
+        .form-input:focus,
+        .form-select:focus {
+            outline: none;
+            border-color: var(--accent-primary);
+            box-shadow: 0 0 0 3px var(--accent-glow);
+        }
+        
+        .form-help {
+            margin-top: var(--spacing-xs);
+            font-size: 11px;
+            color: var(--text-muted);
+        }
+        
+        .modal-actions {
+            display: flex;
+            gap: var(--spacing-sm);
+            justify-content: flex-end;
+            margin-top: var(--spacing-xl);
+        }
+        
+        /* ================================
+           NOTIFICATION TOAST
+           ================================ */
+        .toast-container {
+            position: fixed;
+            bottom: var(--spacing-lg);
+            right: var(--spacing-lg);
+            z-index: 10001;
+            display: flex;
+            flex-direction: column;
+            gap: var(--spacing-sm);
+        }
+        
+        .toast {
+            background: var(--bg-panel);
+            border: 1px solid var(--border-color);
+            border-left: 4px solid var(--accent-primary);
+            border-radius: 6px;
+            padding: var(--spacing-md);
+            box-shadow: var(--shadow-lg);
+            min-width: 300px;
+            animation: slideInRight var(--transition-base);
+        }
+        
+        @keyframes slideInRight {
+            from { transform: translateX(400px); opacity: 0; }
+            to { transform: translateX(0); opacity: 1; }
+        }
+        
+        .toast-success {
+            border-left-color: var(--status-validated);
+        }
+        
+        .toast-error {
+            border-left-color: var(--status-target);
+        }
+        
+        .toast-message {
+            font-size: 12px;
+            color: var(--text-primary);
+        }
+
+        /* Undo/Redo bar */
+        .undo-redo-bar {
+            position: fixed;
+            bottom: 16px;
+            left: 50%;
+            transform: translateX(-50%);
+            display: flex;
+            gap: 10px;
+            z-index: 10002;
+            align-items: center;
+        }
+
+        .undo-redo-bar .btn {
+            padding: 8px 12px;
+            font-size: 12px;
+            text-transform: none;
+        }
+
+        .btn[disabled] {
+            opacity: 0.45;
+            cursor: not-allowed;
+        }
+    </style>
+</head>
+<body>
+    <!-- Header -->
+    <div class="header-bar">
+        <div class="logo-section">
+            <div>
+                <div class="logo">MIDINS TITAN</div>
+                <div class="logo-subtitle">OSINT Intelligence</div>
+            </div>
+        </div>
+        <div class="header-actions">
+            <button class="btn" onclick="exportGraph()">💾 Export</button>
+            <button class="btn" onclick="importGraph()">📁 Import</button>
+            <button class="btn btn-primary" onclick="clearGraph()">🗑️ Clear</button>
+        </div>
+    </div>
+
+    <div class="app-container">
+        <!-- Sidebar -->
+        <div class="sidebar">
+            <div class="search-section">
+                <div class="search-label">🔍 Master Search</div>
+                <input 
+                    type="text" 
+                    id="masterSearch" 
+                    class="master-search" 
+                    placeholder="URL or text to create a node..."
+                />
+            </div>
+            
+            <div class="tools-section" id="toolsContainer">
+                <!-- Categories will be generated by JS -->
+            </div>
+        </div>
+
+        <!-- Canvas -->
+        <div class="canvas-container">
+            <div class="canvas-toolbar">
+                <button class="toolbar-btn active" id="selectMode" onclick="setMode('select')">
+                    ✋ Select
+                </button>
+                <button class="toolbar-btn" id="linkMode" onclick="setMode('link')">
+                    🔗 Link
+                </button>
+            </div>
+            <div id="network"></div>
+        </div>
+    </div>
+
+    <!-- Context Menu -->
+    <div class="context-menu" id="contextMenu">
+        <div class="context-menu-item" onclick="renameNode()">
+            ✏️ Rename
+        </div>
+        <div class="context-menu-item">
+            🎨 Color
+            <div class="submenu">
+                <div class="context-menu-item" onclick="changeNodeColor('#ff4757')">🔴 Target</div>
+                <div class="context-menu-item" onclick="changeNodeColor('#1dd1a1')">🟢 Validated</div>
+                <div class="context-menu-item" onclick="changeNodeColor('#5f27cd')">🔵 Info</div>
+                <div class="context-menu-item" onclick="changeNodeColor('#a371f7')">🟣 Default</div>
+            </div>
+        </div>
+        <div class="context-menu-item">
+            📐 Shape
+            <div class="submenu">
+                <div class="context-menu-item" onclick="changeNodeShape('circle')">⭕ Circle</div>
+                <div class="context-menu-item" onclick="changeNodeShape('box')">⬜ Box</div>
+                <div class="context-menu-item" onclick="changeNodeShape('database')">🗄️ Database</div>
+                <div class="context-menu-item" onclick="changeNodeShape('diamond')">💎 Diamond</div>
+            </div>
+        </div>
+        <div class="context-menu-separator"></div>
+        <div class="context-menu-item" onclick="deleteNode()" style="color: var(--status-target);">
+            🗑️ Delete
+        </div>
+    </div>
+
+    <!-- Modal to add/edit a tool -->
+    <div class="modal-overlay" id="toolModal">
+        <div class="modal">
+            <div class="modal-header">
+                <h2 class="modal-title" id="modalTitle">Add Tool</h2>
+                <button class="modal-close" onclick="closeToolModal()">×</button>
+            </div>
+            <form id="toolForm" onsubmit="saveToolForm(event)">
+                <div class="form-group">
+                    <label class="form-label">Category</label>
+                    <select class="form-select" id="toolCategory" required>
+                        <!-- Options generated dynamically -->
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Tool Name</label>
+                    <input type="text" class="form-input" id="toolName" required placeholder="Ex: Google Search">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">URL Template</label>
+                    <input type="text" class="form-input" id="toolUrl" required placeholder="https://google.com/search?q=%s">
+                    <div class="form-help">Use %s for the search variable</div>
+                </div>
+                <div class="modal-actions">
+                    <button type="button" class="btn" onclick="closeToolModal()">Cancel</button>
+                    <button type="submit" class="btn btn-primary">Save</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Toast Container -->
+    <div class="toast-container" id="toastContainer"></div>
+
+    <!-- Undo/Redo bar -->
+    <div class="undo-redo-bar" id="undoRedoBar" aria-hidden="false">
+        <button class="btn" id="undoBtn" onclick="undo()" title="Undo (Ctrl+Z)">↶ Undo</button>
+        <button class="btn" id="redoBtn" onclick="redo()" title="Redo (Ctrl+Y / Ctrl+Shift+Z)">↷ Redo</button>
+    </div>
+
+    <!-- Hidden file input for import -->
+    <input type="file" id="importFile" accept=".json" style="display: none;" onchange="handleImportFile(event)">
+
+    <script>
+        // ================================
+        // GLOBAL VARIABLES
+        // ================================
+        let network;
+        let nodes;
+        let edges;
+        let currentMode = 'select';
+        let selectedNode = null;
+        let linkSourceNode = null;
+        let nodeIdCounter = 1;
+        let edgeIdCounter = 1;
+
+        // History for undo/redo
+        let historyStates = [];
+        let historyIndex = -1;
+        const maxHistory = 100;
+        
+        // Default OSINT tools
+        const defaultTools = {
+            "SOCIAL NETWORKS": [
+                { name: "Twitter/X", url: "https://twitter.com/search?q=%s" },
+                { name: "LinkedIn", url: "https://www.linkedin.com/search/results/all/?keywords=%s" },
+                { name: "Instagram", url: "https://www.instagram.com/explore/tags/%s/" },
+                { name: "Facebook", url: "https://www.facebook.com/search/top?q=%s" }
+            ],
+            "SEARCH": [
+                { name: "Google", url: "https://www.google.com/search?q=%s" },
+                { name: "DuckDuckGo", url: "https://duckduckgo.com/?q=%s" },
+                { name: "Bing", url: "https://www.bing.com/search?q=%s" },
+                { name: "Wayback Machine", url: "https://web.archive.org/web/*/%s" }
+            ],
+            "IDENTITY": [
+                { name: "Namechk", url: "https://namechk.com/?s=%s" },
+                { name: "WhatsMyName", url: "https://whatsmyname.app/?s=%s" },
+                { name: "Have I Been Pwned", url: "https://haveibeenpwned.com/account/%s" }
+            ],
+            "DOMAINS": [
+                { name: "Whois", url: "https://www.whois.com/whois/%s" },
+                { name: "VirusTotal", url: "https://www.virustotal.com/gui/search/%s" },
+                { name: "URLScan", url: "https://urlscan.io/search/#%s" }
+            ]
+        };
+
+        // ================================
+        // INITIALIZATION
+        // ================================
+        document.addEventListener('DOMContentLoaded', function() {
+            initializeTools();
+            initializeNetwork();
+            setupEventListeners();
+            setupKeyboardShortcuts();
+            loadHistoryFromStorage();
+            showToast('MIDINS TITAN initialized successfully', 'success');
+        });
+
+        // ================================
+        // HISTORY UTILITIES
+        // ================================
+        function loadHistoryFromStorage() {
+            try {
+                const raw = localStorage.getItem('midins_history');
+                if (raw) {
+                    const parsed = JSON.parse(raw);
+                    if (Array.isArray(parsed.states)) {
+                        historyStates = parsed.states;
+                        historyIndex = parsed.index !== undefined ? parsed.index : (historyStates.length - 1);
+                    }
+                }
+            } catch (e) {
+                console.error('Failed to load history:', e);
+            }
+            updateUndoRedoButtons();
+        }
+
+        function saveHistoryToStorage() {
+            try {
+                localStorage.setItem('midins_history', JSON.stringify({ states: historyStates, index: historyIndex }));
+            } catch (e) {
+                console.error('Failed to save history:', e);
+            }
+        }
+
+        function pushHistory() {
+            // Capture current graph state
+            const snapshot = {
+                nodes: nodes.get(),
+                edges: edges.get(),
+                nodeIdCounter,
+                edgeIdCounter
+            };
+
+            // Remove any future states
+            if (historyIndex < historyStates.length - 1) {
+                historyStates = historyStates.slice(0, historyIndex + 1);
+            }
+
+            historyStates.push(snapshot);
+
+            // Keep history size bounded
+            if (historyStates.length > maxHistory) {
+                historyStates.shift();
+            }
+
+            historyIndex = historyStates.length - 1;
+            saveHistoryToStorage();
+            updateUndoRedoButtons();
+        }
+
+        function applyHistoryState(snapshot) {
+            if (!snapshot) return;
+            nodes.clear();
+            edges.clear();
+            if (snapshot.nodes && snapshot.nodes.length) nodes.add(snapshot.nodes);
+            if (snapshot.edges && snapshot.edges.length) edges.add(snapshot.edges);
+            nodeIdCounter = snapshot.nodeIdCounter || 1;
+            edgeIdCounter = snapshot.edgeIdCounter || 1;
+            saveGraph();
+            // focus/fit network to show updated graph
+            try {
+                network.fit({ animation: { duration: 200 } });
+            } catch (e) {}
+            updateUndoRedoButtons();
+        }
+
+        function undo() {
+            if (historyIndex <= 0) {
+                showToast('No more undo steps', 'error');
+                return;
+            }
+            historyIndex--;
+            const snapshot = historyStates[historyIndex];
+            applyHistoryState(snapshot);
+            saveHistoryToStorage();
+            showToast('Undo', 'success');
+        }
+
+        function redo() {
+            if (historyIndex >= historyStates.length - 1) {
+                showToast('No more redo steps', 'error');
+                return;
+            }
+            historyIndex++;
+            const snapshot = historyStates[historyIndex];
+            applyHistoryState(snapshot);
+            saveHistoryToStorage();
+            showToast('Redo', 'success');
+        }
+
+        function updateUndoRedoButtons() {
+            const undoBtn = document.getElementById('undoBtn');
+            const redoBtn = document.getElementById('redoBtn');
+            if (!undoBtn || !redoBtn) return;
+            undoBtn.disabled = historyIndex <= 0;
+            redoBtn.disabled = historyIndex >= historyStates.length - 1 || historyStates.length === 0;
+        }
+
+        function setupKeyboardShortcuts() {
+            document.addEventListener('keydown', function(e) {
+                // Ctrl/Cmd + Z -> undo; Ctrl/Cmd + Y or Ctrl/Cmd + Shift + Z -> redo
+                if ((e.ctrlKey || e.metaKey) && e.key) {
+                    const key = e.key.toLowerCase();
+                    if (key === 'z') {
+                        e.preventDefault();
+                        if (e.shiftKey) redo(); else undo();
+                    } else if (key === 'y') {
+                        e.preventDefault();
+                        redo();
+                    }
+                }
+            });
+        }
+
+        // ================================
+        // TOOLS
+        // ================================
+        function initializeTools() {
+            // Load from localStorage or use default tools
+            let tools = localStorage.getItem('midins_tools');
+            if (!tools) {
+                tools = defaultTools;
+                localStorage.setItem('midins_tools', JSON.stringify(tools));
+            } else {
+                tools = JSON.parse(tools);
+            }
+            renderTools(tools);
+        }
+
+        function renderTools(tools) {
+            const container = document.getElementById('toolsContainer');
+            container.innerHTML = '';
+
+            for (const [category, toolList] of Object.entries(tools)) {
+                const categoryDiv = document.createElement('div');
+                categoryDiv.className = 'tool-category';
+                
+                const header = document.createElement('div');
+                header.className = 'category-header';
+                header.innerHTML = `
+                    <div class="category-title">${category}</div>
+                    <div class="category-actions">
+                        <button class="icon-btn" onclick="addToolToCategory('${category}')" title="Add">+</button>
+                        <button class="icon-btn" onclick="deleteCategory('${category}')" title="Delete">×</button>
+                    </div>
+                `;
+                
+                categoryDiv.appendChild(header);
+                
+                toolList.forEach((tool, index) => {
+                    const toolDiv = document.createElement('div');
+                    toolDiv.className = 'tool-item';
+                    toolDiv.innerHTML = `
+                        <div class="tool-name">${tool.name}</div>
+                        <div class="tool-url">${tool.url}</div>
+                    `;
+                    toolDiv.onclick = () => executeTool(tool.url);
+                    categoryDiv.appendChild(toolDiv);
+                });
+                
+                container.appendChild(categoryDiv);
+            }
+            
+            // Button to add a new category
+            const addCategoryBtn = document.createElement('button');
+            addCategoryBtn.className = 'add-tool-btn';
+            addCategoryBtn.textContent = '+ New Category';
+            addCategoryBtn.onclick = addNewCategory;
+            container.appendChild(addCategoryBtn);
+        }
+
+        function executeTool(urlTemplate) {
+            const searchValue = document.getElementById('masterSearch').value.trim();
+            if (!searchValue) {
+                showToast('Please enter a search value', 'error');
+                return;
+            }
+            
+            const finalUrl = urlTemplate.replace('%s', encodeURIComponent(searchValue));
+            window.open(finalUrl, '_blank');
+            showToast(`Tool launched: ${searchValue}`, 'success');
+        }
+
+        function addNewCategory() {
+            const categoryName = prompt('Name of the new category (%s = the search term):');
+            if (!categoryName) return;
+            
+            const tools = JSON.parse(localStorage.getItem('midins_tools'));
+            if (tools[categoryName]) {
+                showToast('This category already exists', 'error');
+                return;
+            }
+            
+            tools[categoryName] = [];
+            localStorage.setItem('midins_tools', JSON.stringify(tools));
+            renderTools(tools);
+            showToast(`Category "${categoryName}" created`, 'success');
+        }
+
+        function deleteCategory(category) {
+            if (!confirm(`Delete category "${category}" and all its tools?`)) return;
+            
+            const tools = JSON.parse(localStorage.getItem('midins_tools'));
+            delete tools[category];
+            localStorage.setItem('midins_tools', JSON.stringify(tools));
+            renderTools(tools);
+            showToast(`Category "${category}" deleted`, 'success');
+        }
+
+        function addToolToCategory(category) {
+            document.getElementById('modalTitle').textContent = `Add tool - ${category}`;
+            document.getElementById('toolCategory').value = category;
+            document.getElementById('toolForm').reset();
+            document.getElementById('toolModal').classList.add('show');
+        }
+
+        function closeToolModal() {
+            document.getElementById('toolModal').classList.remove('show');
+        }
+
+        function saveToolForm(event) {
+            event.preventDefault();
+            
+            const category = document.getElementById('toolCategory').value;
+            const name = document.getElementById('toolName').value;
+            const url = document.getElementById('toolUrl').value;
+            
+            const tools = JSON.parse(localStorage.getItem('midins_tools'));
+            if (!tools[category]) tools[category] = [];
+            
+            tools[category].push({ name, url });
+            localStorage.setItem('midins_tools', JSON.stringify(tools));
+            
+            renderTools(tools);
+            closeToolModal();
+            showToast(`Tool "${name}" added`, 'success');
+        }
+
+        // ================================
+        // VIS.JS NETWORK
+        // ================================
+        function initializeNetwork() {
+            const container = document.getElementById('network');
+            
+            nodes = new vis.DataSet([]);
+            edges = new vis.DataSet([]);
+            
+            const data = { nodes, edges };
+            
+            const options = {
+                nodes: {
+                    shape: 'box',
+                    margin: 10,
+                    widthConstraint: {
+                        maximum: 200
+                    },
+                    font: {
+                        color: '#e8eaed',
+                        size: 14,
+                        face: 'JetBrains Mono'
+                    },
+                    color: {
+                        background: '#1c2028',
+                        border: '#a371f7',
+                        highlight: {
+                            background: '#232932',
+                            border: '#00d9ff'
+                        }
+                    },
+                    borderWidth: 2,
+                    shadow: {
+                        enabled: true,
+                        color: 'rgba(0, 0, 0, 0.5)',
+                        size: 10,
+                        x: 0,
+                        y: 2
+                    }
+                },
+                edges: {
+                    arrows: {
+                        to: {
+                            enabled: true,
+                            scaleFactor: 0.5
+                        }
+                    },
+                    color: {
+                        color: '#a371f7',
+                        highlight: '#00d9ff',
+                        hover: '#00d9ff'
+                    },
+                    width: 2,
+                    smooth: {
+                        type: 'cubicBezier',
+                        forceDirection: 'none'
+                    }
+                },
+                physics: {
+                    enabled: true,
+                    stabilization: {
+                        iterations: 100
+                    },
+                    barnesHut: {
+                        gravitationalConstant: -2000,
+                        springConstant: 0.001,
+                        springLength: 200
+                    }
+                },
+                interaction: {
+                    dragNodes: true,
+                    dragView: true,
+                    zoomView: true,
+                    hover: true,
+                    navigationButtons: true,
+                    keyboard: true
+                },
+                manipulation: {
+                    enabled: false
+                }
+            };
+            
+            network = new vis.Network(container, data, options);
+            
+            // Disable physics after stabilization
+            network.on('stabilizationIterationsDone', function() {
+                network.setOptions({ physics: false });
+            });
+            
+            // Click handling
+            network.on('click', handleNetworkClick);
+            
+            // Right-click handling
+            network.on('oncontext', handleNetworkRightClick);
+            
+            // Load saved graph if exists
+            loadSavedGraph();
+
+            // Push an initial history state (current loaded or empty)
+            pushHistory();
+        }
+
+        function handleNetworkClick(params) {
+            if (currentMode === 'select') {
+                if (params.nodes.length > 0) {
+                    selectedNode = params.nodes[0];
+                }
+            } else if (currentMode === 'link') {
+                if (params.nodes.length > 0) {
+                    if (!linkSourceNode) {
+                        linkSourceNode = params.nodes[0];
+                        showToast('Source node selected, click on target node', 'success');
+                    } else {
+                        const targetNode = params.nodes[0];
+                        if (linkSourceNode !== targetNode) {
+                            edges.add({
+                                id: edgeIdCounter++,
+                                from: linkSourceNode,
+                                to: targetNode
+                            });
+                            saveGraph();
+                            pushHistory();
+                            showToast('Link created', 'success');
+                        }
+                        linkSourceNode = null;
+                    }
+                }
+            }
+        }
+
+        function handleNetworkRightClick(params) {
+            params.event.preventDefault();
+            
+            if (params.nodes.length > 0) {
+                selectedNode = params.nodes[0];
+                showContextMenu(params.event.center.x, params.event.center.y);
+            } else {
+                hideContextMenu();
+            }
+        }
+
+        function showContextMenu(x, y) {
+            const menu = document.getElementById('contextMenu');
+            menu.style.left = x + 'px';
+            menu.style.top = y + 'px';
+            menu.classList.add('show');
+        }
+
+        function hideContextMenu() {
+            document.getElementById('contextMenu').classList.remove('show');
+        }
+
+        // Close context menu when clicking elsewhere
+        document.addEventListener('click', function(e) {
+            if (!e.target.closest('.context-menu')) {
+                hideContextMenu();
+            }
+        });
+
+        function renameNode() {
+            if (!selectedNode) return;
+            
+            const currentNode = nodes.get(selectedNode);
+            const newLabel = prompt('New name:', currentNode.label);
+            
+            if (newLabel && newLabel.trim()) {
+                nodes.update({
+                    id: selectedNode,
+                    label: newLabel.trim()
+                });
+                saveGraph();
+                pushHistory();
+                showToast('Node renamed', 'success');
+            }
+            
+            hideContextMenu();
+        }
+
+        function changeNodeColor(color) {
+            if (!selectedNode) return;
+            
+            nodes.update({
+                id: selectedNode,
+                color: {
+                    background: color,
+                    border: color
+                }
+            });
+            
+            saveGraph();
+            pushHistory();
+            showToast('Color changed', 'success');
+            hideContextMenu();
+        }
+
+        function changeNodeShape(shape) {
+            if (!selectedNode) return;
+            
+            nodes.update({
+                id: selectedNode,
+                shape: shape
+            });
+            
+            saveGraph();
+            pushHistory();
+            showToast('Shape changed', 'success');
+            hideContextMenu();
+        }
+
+        function deleteNode() {
+            if (!selectedNode) return;
+            
+            if (confirm('Delete this node?')) {
+                nodes.remove(selectedNode);
+                // Also remove connected edges
+                const connectedEdges = edges.get({
+                    filter: edge => edge.from === selectedNode || edge.to === selectedNode
+                });
+                edges.remove(connectedEdges.map(e => e.id));
+                
+                saveGraph();
+                pushHistory();
+                showToast('Node deleted', 'success');
+            }
+            
+            hideContextMenu();
+        }
+
+        function setMode(mode) {
+            currentMode = mode;
+            linkSourceNode = null;
+            
+            document.getElementById('selectMode').classList.toggle('active', mode === 'select');
+            document.getElementById('linkMode').classList.toggle('active', mode === 'link');
+            
+            showToast(`Mode: ${mode === 'select' ? 'Select' : 'Link'}`, 'success');
+        }
+
+        // ================================
+        // MASTER SEARCH & NODE CREATION
+        // ================================
+        function setupEventListeners() {
+            const masterSearch = document.getElementById('masterSearch');
+            
+            masterSearch.addEventListener('keypress', function(e) {
+                if (e.key === 'Enter') {
+                    const value = this.value.trim();
+                    if (value) {
+                        createNodeFromInput(value);
+                        this.value = '';
+                    }
+                }
+            });
+        }
+
+        async function createNodeFromInput(input) {
+            // Detect if it's a URL
+            const urlPattern = /^(https?:\/\/)?([\da-z\.-]+)\.([a-z\.]{2,6})([\/\w \.-]*)*\/?$/;
+            
+            if (urlPattern.test(input)) {
+                // It's a URL, fetch metadata
+                await createUrlNode(input);
+            } else {
+                // Plain text
+                createTextNode(input);
+            }
+        }
+
+        async function createUrlNode(url) {
+            // Add protocol if missing
+            if (!url.startsWith('http://') && !url.startsWith('https://')) {
+                url = 'https://' + url;
+            }
+            
+            showToast('Fetching information...', 'success');
+            
+            try {
+                const response = await fetch('/api/preview', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ url })
+                });
+                
+                const data = await response.json();
+                
+                if (data.error && !data.fallback) {
+                    throw new Error(data.message);
+                }
+                
+                const nodeData = {
+                    id: nodeIdCounter++,
+                    label: data.title || url,
+                    title: `${data.title || 'URL'}\n${url}${data.description ? '\n\n' + data.description : ''}`,
+                    url: url,
+                    shape: 'box',
+                    color: {
+                        background: '#1c2028',
+                        border: '#a371f7'
+                    }
+                };
+                
+                // Add an icon if favicon exists
+                if (data.favicon) {
+                    nodeData.image = data.favicon;
+                    nodeData.shape = 'circularImage';
+                }
+                
+                nodes.add(nodeData);
+                saveGraph();
+                pushHistory();
+                showToast('URL node created', 'success');
+                
+            } catch (error) {
+                console.error('Error creating URL node:', error);
+                // Create a fallback node
+                nodes.add({
+                    id: nodeIdCounter++,
+                    label: new URL(url).hostname,
+                    title: url,
+                    url: url,
+                    shape: 'box',
+                    color: {
+                        background: '#1c2028',
+                        border: '#ff4757'
+                    }
+                });
+                saveGraph();
+                pushHistory();
+                showToast('Node created (fallback mode)', 'error');
+            }
+        }
+
+        function createTextNode(text) {
+            nodes.add({
+                id: nodeIdCounter++,
+                label: text,
+                title: text,
+                shape: 'box',
+                color: {
+                    background: '#1c2028',
+                    border: '#a371f7'
+                }
+            });
+            
+            saveGraph();
+            pushHistory();
+            showToast('Text node created', 'success');
+        }
+
+        // ================================
+        // PERSISTENCE
+        // ================================
+        function saveGraph() {
+            const graphData = {
+                nodes: nodes.get(),
+                edges: edges.get(),
+                nodeIdCounter,
+                edgeIdCounter
+            };
+            
+            localStorage.setItem('midins_graph', JSON.stringify(graphData));
+        }
+
+        function loadSavedGraph() {
+            const saved = localStorage.getItem('midins_graph');
+            if (saved) {
+                try {
+                    const graphData = JSON.parse(saved);
+                    nodes.clear();
+                    edges.clear();
+                    nodes.add(graphData.nodes);
+                    edges.add(graphData.edges);
+                    nodeIdCounter = graphData.nodeIdCounter || 1;
+                    edgeIdCounter = graphData.edgeIdCounter || 1;
+                    showToast('Investigation loaded', 'success');
+                } catch (error) {
+                    console.error('Error loading:', error);
+                }
+            }
+        }
+
+        function exportGraph() {
+            const graphData = {
+                nodes: nodes.get(),
+                edges: edges.get(),
+                nodeIdCounter,
+                edgeIdCounter,
+                exportDate: new Date().toISOString(),
+                version: '1.0.0'
+            };
+            
+            const dataStr = JSON.stringify(graphData, null, 2);
+            const dataBlob = new Blob([dataStr], { type: 'application/json' });
+            
+            const link = document.createElement('a');
+            link.href = URL.createObjectURL(dataBlob);
+            link.download = `midins_export_${Date.now()}.json`;
+            link.click();
+            
+            showToast('Investigation exported', 'success');
+        }
+
+        function importGraph() {
+            document.getElementById('importFile').click();
+        }
+
+        function handleImportFile(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+            
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                try {
+                    const graphData = JSON.parse(e.target.result);
+                    
+                    if (confirm('This will replace the current investigation. Continue?')) {
+                        nodes.clear();
+                        edges.clear();
+                        nodes.add(graphData.nodes);
+                        edges.add(graphData.edges);
+                        nodeIdCounter = graphData.nodeIdCounter || 1;
+                        edgeIdCounter = graphData.edgeIdCounter || 1;
+                        
+                        saveGraph();
+                        pushHistory();
+                        showToast('Investigation imported', 'success');
+                    }
+                } catch (error) {
+                    showToast('Invalid file', 'error');
+                    console.error('Import error:', error);
+                }
+            };
+            
+            reader.readAsText(file);
+        }
+
+        function clearGraph() {
+            if (confirm('Clear the entire investigation? This action is irreversible.')) {
+                nodes.clear();
+                edges.clear();
+                nodeIdCounter = 1;
+                edgeIdCounter = 1;
+                localStorage.removeItem('midins_graph');
+                saveGraph();
+                pushHistory();
+                showToast('Investigation cleared', 'success');
+            }
+        }
+
+        // ================================
+        // TOAST NOTIFICATIONS
+        // ================================
+        function showToast(message, type = 'success') {
+            const container = document.getElementById('toastContainer');
+            const toast = document.createElement('div');
+            toast.className = `toast toast-${type}`;
+            toast.innerHTML = `<div class="toast-message">${message}</div>`;
+            
+            container.appendChild(toast);
+            
+            setTimeout(() => {
+                toast.style.animation = 'slideOutRight 0.3s ease';
+                setTimeout(() => toast.remove(), 300);
+            }, 3000);
+        }
+
+        // Fill the category select in the modal
+        window.addEventListener('load', function() {
+            const tools = JSON.parse(localStorage.getItem('midins_tools'));
+            const select = document.getElementById('toolCategory');
+            
+            for (const category in tools) {
+                const option = document.createElement('option');
+                option.value = category;
+                option.textContent = category;
+                select.appendChild(option);
+            }
+            updateUndoRedoButtons();
+        });
+    </script>
+</body>
+</html>
