@@ -27,7 +27,6 @@ In OSINT, speed and clarity are everything. **MIDINS TITAN** focuses on what act
 
 ### 🔍 Smart Intelligence Extraction
 * **Auto-Scraping:** Drop a URL, and TITAN instantly pulls the Site Title and Official Logo to build your evidence card.
-* **Dynamic Orbiting (Levitation):** Add associated keywords (usernames, project names, aliases) to a site node. They will levitate around the main target, creating a visual cloud of related intelligence.
 
 ### 🕸️ Advanced Visual Mapping
 * **Smart Tools:** Access a wide array of customizable tools via the left sidebar. Use the (s%) search term to filter and deploy specialized investigation modules instantly.
@@ -44,15 +43,15 @@ In OSINT, speed and clarity are everything. **MIDINS TITAN** focuses on what act
 ## 🚀 Installation & Launch
 
 1. Get the Source Code
-Duplicate the source code to your machine by cloning the repository or downloading the ZIP:
-git clone https://github.com/YOUR_USERNAME/YOUR_REPO_NAME.git
+Duplicate the source code to your machine by downloading the ZIP:
+green button 'code' -> download zip
 
 2. Install Dependencies
 Run the following command in your terminal to install required libraries:
 pip install -r requirements.txt
 
 3. Launch the Tool
-- On Windows: Double-click the automation file LANCER_TITAN.bat.
+- On Windows: Double-click the automation file launch.bat.
 - On Mac or Linux: Run the application directly with: python app.py
 
 Then open your browser at: http://127.0.0.1:5000
