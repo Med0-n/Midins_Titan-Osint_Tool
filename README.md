@@ -47,6 +47,6 @@ Run the following command: python app.py Access your board at: http://127.0.0.1:
 [ ] Entity Correlation: Automatic highlighting of matching email/username patterns.
 
 ## **📜 License**
-This project is distributed under the MIT License. See the LICENSE file for more details.
+CC BY-SA 4.0
 
 MIDINS TITAN: Multimedia Intelligence & Digital Investigation Network System. Built for clarity, powered by truth.
