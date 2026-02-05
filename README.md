@@ -10,8 +10,8 @@
 
 ---
 
-## 📸 Preview
-<img width="2559" height="1442" alt="ScreenShot" src="https://github.com/user-attachments/assets/f1e5828a-ccea-4098-888b-56a4deb74cd9" />
+## 📸 Preview (on the sakura osint challenge)
+<img width="2559" height="1439" alt="Capture d&#39;écran 2026-02-05 205707" src="https://github.com/user-attachments/assets/af44aa9f-42c4-428a-b78f-3b5834463ee5" />
 
 ---
 
