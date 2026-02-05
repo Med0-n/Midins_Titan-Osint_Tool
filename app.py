@@ -318,7 +318,7 @@ if __name__ == '__main__':
     ║            Version 1.0.0              ║
     ╚═══════════════════════════════════════╝
     
-    🚀 Serveur démarré sur http://127.0.0.1:5000
+    🚀 Servor launch on : click here -> http://127.0.0.1:5000
     🔍 Case Management & Intelligence Graph
     """)
     
