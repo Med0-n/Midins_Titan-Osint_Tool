@@ -48,15 +48,14 @@ In OSINT, speed and clarity are everything. **MIDINS TITAN** focuses on what act
 ## 🚀 Installation & Launch
 
 1. **Get the Source Code**
-Duplicate the source code to your machine by cloning the repository or downloading the ZIP:
-`git clone https://github.com/YOUR_USERNAME/YOUR_REPO_NAME.git`
+Go to releases and downlowad the (exemple) : Midins Titan V1.2.3.zip
 
 2. **Install Dependencies**
 Run the following command to install required libraries:
 `pip install -r requirements.txt`
 
 3. **Launch the Tool**
-- **On Windows:** Double-click the automation file `LANCER_TITAN.bat`.
+- **On Windows:** Double-click the automation file `launch.bat`.
 - **On Mac or Linux:** Run the application with: `python app.py`
 
 Then open your browser at: `http://127.0.0.1:5000`
