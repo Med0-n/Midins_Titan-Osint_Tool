@@ -11,6 +11,7 @@
 ---
 
 ## 📸 Preview
+New ! web link to try (not all fonctionalities might work correcty because of no python) : https://midins-titan.netlify.app/
 <img width="2559" height="1442" alt="ScreenShot" src="https://github.com/user-attachments/assets/f1e5828a-ccea-4098-888b-56a4deb74cd9" />
 
 ---
