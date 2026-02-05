@@ -37,6 +37,7 @@ In OSINT, speed and clarity are everything. **MIDINS TITAN** focuses on what act
 
 ### 🛡️ Privacy & Sovereignty
 * **100% Local:** Runs on a local Flask server. Your data, your targets, and your research never touch the cloud.
+* * **100% Safe:** https://www.virustotal.com/gui/file/05f373a667228706c583edc616a13e2a013e8ce647111bf79d181f5f5943718c?nocache=1
 * **Zero Tracking:** No analytics, no external logs. Total confidentiality for sensitive investigations.
 
 ---
