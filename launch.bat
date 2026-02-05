@@ -7,27 +7,27 @@ mode con: cols=85 lines=22
 color 05
 
 echo ======================================================
-echo           TITAN SYSTEM : FOLDER DETECTED
+echo           TITAN SYSTEM : FOLDER DETECTION
 echo ======================================================
 echo.
 echo [INFO] Emplacement detected : %cd%
 echo.
 
-:: 1. Launching the Python server in a separate window
-echo [1/2] Starting the Flask engine...
+:: 1. Lancement du serveur Python dans une fenetre separee
+echo [1/2] Lancement du moteur Flask...
 start "TITAN_SERVER" cmd /k python app.py
 
-:: 2. Waiting 3 seconds for initialization
+:: 2. Attente de 3 secondes pour l'initialisation
 timeout /t 3 /nobreak > nul
 
-:: 3. Automatically opening the browser
-echo [2/2] Opening the graphical interface...
+:: 3. Ouverture automatique du navigateur
+echo [2/2] Ouverture de l'interface graphique...
 start http://127.0.0.1:5000
 
 echo.
 echo ======================================================
-echo           TITAN IS READY - GOOD INVESTIGATION
+echo           TITAN EST PRET - BONNE ENQUETE
 echo ======================================================
-echo This launcher will close in 5 seconds...
+echo Ce lanceur va se fermer dans 5 secondes...
 timeout /t 5 > nul
 exit
