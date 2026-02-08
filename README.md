@@ -6,6 +6,10 @@
 ![Security](https://img.shields.io/badge/Privacy-Local--First-orange.svg)
 ![License](https://img.shields.io/badge/License-CC%20BY--SA%204.0-lightgrey.svg)
 
+**📢 Join the community on Telegram for updates and support: https://t.me/+SFLFzzAGPCViM2I0**
+
+---
+
 **MIDINS TITAN** is a lightweight, local-first OSINT intelligent whiteboard. It is designed for investigators who need a fast, private, and professional way to map digital evidence and infrastructure without the complexity of bloated software.
 
 ---
