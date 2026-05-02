@@ -51,18 +51,43 @@ In OSINT, speed and clarity are everything. **MIDINS TITAN** focuses on what act
 
 ## 🚀 Installation & Launch
 
-1. **Get the Source Code**
-Go to releases and downlowad the (exemple) : Midins Titan V1.2.3.zip
+### 1. Get the Source Code
+Go to [Releases](../../releases) and download the latest version (e.g. `Midins Titan V1.2.4.zip or Source code.zip`), then extract it.
 
-2. **Install Dependencies**
-Run the following command to install required libraries:
-`pip install -r requirements.txt`
+### 2. Install Dependencies
 
-3. **Launch the Tool**
-- **On Windows:** Double-click the automation file `launch.bat`.
-- **On Mac or Linux:** Run the application with: `python app.py`
+**Windows:**
+Double-click `install.bat`
 
-Then open your browser at: `http://127.0.0.1:5000`
+**Linux / macOS:**
+```bash
+chmod +x install.sh
+./install.sh
+```
+
+**Manual (any OS):**
+```bash
+pip install -r requirements.txt
+```
+
+### 3. Launch the Tool
+
+- **Windows:** Double-click `launch.bat`
+- **Mac / Linux:**
+  ```bash
+  python app.py
+  ```
+
+Then open your browser at: **http://127.0.0.1:5000**
+
+---
+
+## 📋 Requirements
+- Python 3.9+
+- pip
+
+## 🛠️ Troubleshooting
+If `lxml` fails to install, run the install script for your OS — it handles system dependencies automatically.
 
 ---
 
