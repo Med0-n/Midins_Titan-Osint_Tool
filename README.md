@@ -8,6 +8,8 @@
 
 **📢 Join the community on Telegram for updates and support: https://t.me/+SFLFzzAGPCViM2I0**
 
+**Go check my new tool : Midins Decryptor -> https://github.com/Med0-n/Midins-Decryptor**
+
 ---
 
 **MIDINS TITAN** is a lightweight, local-first OSINT intelligent whiteboard. It is designed for investigators who need a fast, private, and professional way to map digital evidence and infrastructure without the complexity of bloated software.
