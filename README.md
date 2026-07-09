@@ -6,9 +6,7 @@
 ![Security](https://img.shields.io/badge/Privacy-Local--First-orange.svg)
 ![License](https://img.shields.io/badge/License-CC%20BY--SA%204.0-lightgrey.svg)
 
-**📢 Join the community on Telegram for updates and support: https://t.me/+SFLFzzAGPCViM2I0**
-
-**Go check my new tool : Midins Decryptor -> https://github.com/Med0-n/Midins-Decryptor**
+**Go check my other tool : Midins Decryptor -> https://github.com/Med0-n/Midins-Decryptor**
 
 ---
 
