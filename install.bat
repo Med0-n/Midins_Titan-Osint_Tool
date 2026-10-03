@@ -11,6 +11,6 @@ if %errorlevel% neq 0 (
 
 echo.
 echo Installation complete!
-echo Run: python app.py
+echo Run: launch.bat
 pause
 

@@ -13,9 +13,18 @@ echo.
 echo [INFO] Emplacement detected : %cd%
 echo.
 
-:: 1. Lancement du serveur Python dans une fenetre separee
+:: 1. Detection de l'interpreteur Python (venv ou systeme)
+if exist "%~dp0venv\Scripts\python.exe" (
+    set "PY_CMD=%~dp0venv\Scripts\python.exe"
+) else if exist "%~dp0.venv\Scripts\python.exe" (
+    set "PY_CMD=%~dp0.venv\Scripts\python.exe"
+) else (
+    set "PY_CMD=python"
+)
+
+:: 2. Lancement du serveur Python dans une fenetre separee
 echo [1/2] Lancement du moteur Flask...
-start "TITAN_SERVER" cmd /k python app.py
+start "TITAN_SERVER" cmd /k "%PY_CMD%" app.py
 
 :: 2. Attente de 3 secondes pour l'initialisation
 timeout /t 3 /nobreak > nul

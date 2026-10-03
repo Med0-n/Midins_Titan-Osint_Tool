@@ -15,6 +15,8 @@ import base64
 app = Flask(__name__)
 app.config['JSON_AS_ASCII'] = False
 
+VERSION = '1.2.0'
+
 UPLOAD_FOLDER = 'uploads'
 ALLOWED_IMAGE_EXTENSIONS = {'png', 'jpg', 'jpeg', 'gif', 'webp'}
 MAX_IMAGE_SIZE = 5 * 1024 * 1024
@@ -242,7 +244,7 @@ def health_check():
     return jsonify({
         'status': 'ok',
         'service': 'MIDINS TITAN',
-        'version': '1.0.0'
+        'version': VERSION
     })
 
 
@@ -362,10 +364,10 @@ def internal_error(error):
 
 
 if __name__ == '__main__':
-    print("""
+    print(f"""
     ╔═══════════════════════════════════════╗
     ║      MIDINS TITAN - OSINT TOOL        ║
-    ║            Version 1.0.0              ║
+    ║           Version {VERSION}              ║
     ╚═══════════════════════════════════════╝
     
     🚀 Serveur démarré sur http://127.0.0.1:5000
