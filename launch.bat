@@ -1,19 +1,18 @@
 @echo off
-:: Cette commande permet de forcer le terminal à se situer dans le dossier du script
 cd /d "%~dp0"
 
-title TITAN OSINT - AUTO-DETECTION
+title MIDINS TITAN OSINT - LAUNCHER
 mode con: cols=85 lines=22
-color 05
+color 0b
 
 echo ======================================================
-echo           TITAN SYSTEM : FOLDER DETECTION
+echo           MIDINS TITAN : SYSTEM LAUNCHER
 echo ======================================================
 echo.
-echo [INFO] Emplacement detected : %cd%
+echo [INFO] Detected location: %cd%
 echo.
 
-:: 1. Detection de l'interpreteur Python (venv ou systeme)
+:: 1. Python interpreter detection (venv or system)
 if exist "%~dp0venv\Scripts\python.exe" (
     set "PY_CMD=%~dp0venv\Scripts\python.exe"
 ) else if exist "%~dp0.venv\Scripts\python.exe" (
@@ -22,21 +21,21 @@ if exist "%~dp0venv\Scripts\python.exe" (
     set "PY_CMD=python"
 )
 
-:: 2. Lancement du serveur Python dans une fenetre separee
-echo [1/2] Lancement du moteur Flask...
+:: 2. Launch Flask server in separate window
+echo [1/2] Starting Flask backend server...
 start "TITAN_SERVER" cmd /k "%PY_CMD%" app.py
 
-:: 2. Attente de 3 secondes pour l'initialisation
+:: 3. Wait 3 seconds for server initialization
 timeout /t 3 /nobreak > nul
 
-:: 3. Ouverture automatique du navigateur
-echo [2/2] Ouverture de l'interface graphique...
+:: 4. Automatically open browser
+echo [2/2] Opening browser interface...
 start http://127.0.0.1:5000
 
 echo.
 echo ======================================================
-echo           TITAN EST PRET - BONNE ENQUETE
+echo           MIDINS TITAN IS READY
 echo ======================================================
-echo Ce lanceur va se fermer dans 5 secondes...
+echo Launcher will close in 5 seconds...
 timeout /t 5 > nul
 exit

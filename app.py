@@ -1,3 +1,6 @@
+import json
+import urllib.request
+import socket
 from flask import Flask, render_template, jsonify, request
 import requests
 from bs4 import BeautifulSoup
@@ -15,7 +18,7 @@ import base64
 app = Flask(__name__)
 app.config['JSON_AS_ASCII'] = False
 
-VERSION = '1.2.0'
+VERSION = '1.3.0'
 
 UPLOAD_FOLDER = 'uploads'
 ALLOWED_IMAGE_EXTENSIONS = {'png', 'jpg', 'jpeg', 'gif', 'webp'}
@@ -188,7 +191,7 @@ def get_preview():
                     raise
                 time.sleep(1)
             except requests.exceptions.RequestException as e:
-                logger.warning(f"Erreur requête pour {url}: {str(e)}")
+                logger.warning(f"Request error for {url}: {str(e)}")
                 if attempt == max_retries - 1:
                     raise
                 time.sleep(1)
@@ -202,7 +205,7 @@ def get_preview():
             'favicon': None
         }), 200
     except requests.exceptions.SSLError:
-        logger.error(f"Erreur SSL pour {url}")
+        logger.error(f"SSL error for {url}")
         return jsonify({
             'error': 'ssl_error',
             'message': 'Certificat SSL invalide',
@@ -211,7 +214,7 @@ def get_preview():
             'favicon': None
         }), 200
     except requests.exceptions.ConnectionError:
-        logger.error(f"Erreur de connexion pour {url}")
+        logger.error(f"Connection error for {url}")
         return jsonify({
             'error': 'connection_error',
             'message': 'Impossible de se connecter au site',
@@ -220,7 +223,7 @@ def get_preview():
             'favicon': None
         }), 200
     except requests.exceptions.RequestException as e:
-        logger.error(f"Erreur générale pour {url}: {str(e)}")
+        logger.error(f"General error for {url}: {str(e)}")
         return jsonify({
             'error': 'request_error',
             'message': str(e),
@@ -229,12 +232,12 @@ def get_preview():
             'favicon': None
         }), 200
     except Exception as e:
-        logger.error(f"Erreur inattendue: {str(e)}")
+        logger.error(f"Unexpected error: {str(e)}")
         return jsonify({
             'error': 'unknown_error',
             'message': 'Une erreur inattendue s\'est produite',
             'fallback': True,
-            'title': 'Erreur',
+            'title': 'Error',
             'favicon': None
         }), 200
 
@@ -256,14 +259,14 @@ def compress_image(image_data, max_width=MAX_IMAGE_WIDTH, max_height=MAX_IMAGE_H
             new_width = int(img.width * ratio)
             new_height = int(img.height * ratio)
             img = img.resize((new_width, new_height), Image.Resampling.LANCZOS)
-            logger.info(f"Image redimensionnée de {img.width}x{img.height}")
+            logger.info(f"Image resized to {img.width}x{img.height}")
         buffer = io.BytesIO()
         img_format = img.format or 'PNG'
         img.save(buffer, format=img_format, optimize=True, quality=85)
         buffer.seek(0)
         return base64.b64encode(buffer.getvalue()).decode('utf-8'), img_format.lower()
     except Exception as e:
-        logger.error(f"Erreur lors de la compression d'image: {str(e)}")
+        logger.error(f"Error compressing image: {str(e)}")
         return None, None
 
 
@@ -271,16 +274,16 @@ def compress_image(image_data, max_width=MAX_IMAGE_WIDTH, max_height=MAX_IMAGE_H
 def upload_image():
     try:
         if 'file' not in request.files:
-            return jsonify({'error': 'Aucun fichier fourni'}), 400
+            return jsonify({'error': 'No file provided'}), 400
         file = request.files['file']
         if file.filename == '':
-            return jsonify({'error': 'Aucun fichier sélectionné'}), 400
+            return jsonify({'error': 'No file selected'}), 400
         filename = secure_filename(file.filename)
         if '.' not in filename or filename.rsplit('.', 1)[1].lower() not in ALLOWED_IMAGE_EXTENSIONS:
             return jsonify({'error': 'Format d\'image non supporté'}), 400
         file_data = file.read()
         if len(file_data) > MAX_IMAGE_SIZE:
-            return jsonify({'error': 'Fichier trop volumineux'}), 400
+            return jsonify({'error': 'File exceeds maximum size'}), 400
         b64_data, img_format = compress_image(file_data)
         if not b64_data:
             return jsonify({'error': 'Erreur lors du traitement de l\'image'}), 500
@@ -290,7 +293,7 @@ def upload_image():
             'filename': filename
         }), 200
     except Exception as e:
-        logger.error(f"Erreur lors de l'upload d'image: {str(e)}")
+        logger.error(f"Error uploading image: {str(e)}")
         return jsonify({'error': str(e)}), 500
 
 
@@ -318,7 +321,7 @@ def get_file_info():
         }), 200
     
     except Exception as e:
-        logger.error(f"Erreur lors de la récupération du fichier: {str(e)}")
+        logger.error(f"Error retrieving file: {str(e)}")
         return jsonify({'error': str(e)}), 500
 
 
@@ -347,20 +350,282 @@ def open_file():
                 'path': abs_path
             }), 200
     except Exception as e:
-        logger.error(f"Erreur lors de l'ouverture du fichier: {str(e)}")
+        logger.error(f"Error opening file: {str(e)}")
         return jsonify({'error': str(e)}), 500
 
 
 
+
+@app.route('/api/pivot', methods=['POST'])
+def execute_pivot_api():
+    """
+    Automated, granular, privacy-first OSINT pivot engine:
+    - IP: 'geo' (Location), 'asn' (Operator / ASN), 'ptr' (Reverse PTR), 'whois' (Netblock / Org)
+    - Domain: 'dns' (IPv4 A), 'dns_aaaa' (IPv6 AAAA), 'mx' (Mail Servers), 'ns' (Nameservers), 'txt' (TXT/SPF), 'subdomains' (Subdomain enumeration)
+    - Email: 'email_domain' (Extract Domain), 'email_mx' (Mail Servers for Email Domain)
+    - Hash: 'hash_type' (Algorithm & Bit Length Identification)
+    """
+    try:
+        data = request.get_json() or {}
+        raw_target = data.get('target', '').strip()
+        pivot_type = data.get('pivot_type', 'dns').strip().lower()
+        
+        if not raw_target:
+            return jsonify({'error': 'Target required'}), 400
+            
+        target = raw_target
+        if '@' in target and pivot_type.startswith('email_'):
+            domain_part = target.split('@')[-1].strip().lower()
+        else:
+            if '://' in target:
+                target = urlparse(target).netloc.split(':')[0]
+            else:
+                target = target.split('/')[0].split(':')[0]
+            target = target.strip()
+            domain_part = target
+        
+        results = []
+        
+        # -----------------------------
+        # IP PIVOTS
+        # -----------------------------
+        if pivot_type == 'geo':
+            url = f'http://ip-api.com/json/{target}?fields=status,message,country,regionName,city'
+            req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+            with urllib.request.urlopen(req, timeout=4) as resp:
+                res_data = json.loads(resp.read().decode())
+                if res_data.get('status') == 'success':
+                    loc_parts = [res_data.get('city'), res_data.get('regionName'), res_data.get('country')]
+                    loc = ', '.join([p for p in loc_parts if p])
+                    results.append({'value': loc, 'type': 'text', 'relation': 'location'})
+                else:
+                    return jsonify({'error': res_data.get('message', 'Geolocation lookup failed')}), 404
+                    
+        elif pivot_type == 'asn':
+            url = f'http://ip-api.com/json/{target}?fields=status,message,isp,as,asname'
+            req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+            with urllib.request.urlopen(req, timeout=4) as resp:
+                res_data = json.loads(resp.read().decode())
+                if res_data.get('status') == 'success':
+                    operator = res_data.get('as') or res_data.get('isp')
+                    results.append({'value': operator, 'type': 'text', 'relation': 'operator / asn'})
+                else:
+                    return jsonify({'error': res_data.get('message', 'ASN lookup failed')}), 404
+
+        elif pivot_type == 'whois':
+            url = f'http://ip-api.com/json/{target}?fields=status,message,org,isp,as,asname'
+            req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+            with urllib.request.urlopen(req, timeout=4) as resp:
+                res_data = json.loads(resp.read().decode())
+                if res_data.get('status') == 'success':
+                    org = res_data.get('org') or res_data.get('isp')
+                    if org:
+                        results.append({'value': org, 'type': 'text', 'relation': 'organization'})
+                    as_info = res_data.get('as')
+                    if as_info:
+                        results.append({'value': as_info, 'type': 'text', 'relation': 'route / asn'})
+                else:
+                    return jsonify({'error': res_data.get('message', 'Organization lookup failed')}), 404
+                    
+        elif pivot_type == 'ptr':
+            # Tier 1: Local socket lookup
+            try:
+                hostname, aliases, _ = socket.gethostbyaddr(target)
+                if hostname and hostname != target:
+                    results.append({'value': hostname, 'type': 'url', 'relation': 'reverse ptr'})
+                    for a in aliases:
+                        if a != hostname and a != target:
+                            results.append({'value': a, 'type': 'url', 'relation': 'alias'})
+            except Exception:
+                pass
+
+            # Tier 2: Cloudflare DoH PTR query
+            if not results:
+                try:
+                    parts = target.split('.')
+                    reversed_ip = '.'.join(reversed(parts)) + '.in-addr.arpa'
+                    url = f'https://cloudflare-dns.com/dns-query?name={reversed_ip}&type=PTR'
+                    req = urllib.request.Request(url, headers={'Accept': 'application/dns-json', 'User-Agent': 'Mozilla/5.0'})
+                    with urllib.request.urlopen(req, timeout=4) as resp:
+                        doh_data = json.loads(resp.read().decode())
+                        for ans in doh_data.get('Answer', []):
+                            val = ans.get('data', '').rstrip('.')
+                            if val and val != target:
+                                results.append({'value': val, 'type': 'url', 'relation': 'reverse ptr'})
+                except Exception:
+                    pass
+
+            # Tier 3: ip-api fallback
+            if not results:
+                try:
+                    url = f'http://ip-api.com/json/{target}?fields=status,reverse'
+                    req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+                    with urllib.request.urlopen(req, timeout=4) as resp:
+                        res_data = json.loads(resp.read().decode())
+                        rev = res_data.get('reverse', '').strip().rstrip('.')
+                        if rev and rev != target:
+                            results.append({'value': rev, 'type': 'url', 'relation': 'reverse ptr'})
+                except Exception:
+                    pass
+
+            if not results:
+                return jsonify({'error': 'No Reverse DNS (PTR) record found for this IP address (Reverse DNS not configured by host)'}), 404
+                
+        # -----------------------------
+        # DOMAIN PIVOTS
+        # -----------------------------
+        elif pivot_type == 'dns':
+            try:
+                infos = socket.getaddrinfo(target, None, socket.AF_INET, socket.SOCK_STREAM)
+                ips = sorted(list(set(info[4][0] for info in infos)))
+                for ip in ips:
+                    results.append({'value': ip, 'type': 'ip', 'relation': 'resolves to'})
+            except Exception as e:
+                logger.warning(f"Forward DNS failed for {target}: {e}")
+                return jsonify({'error': f'IPv4 DNS resolution failed: {str(e)}'}), 404
+
+        elif pivot_type == 'dns_aaaa':
+            try:
+                url = f'https://cloudflare-dns.com/dns-query?name={target}&type=AAAA'
+                req = urllib.request.Request(url, headers={'Accept': 'application/dns-json'})
+                with urllib.request.urlopen(req, timeout=4) as resp:
+                    doh_data = json.loads(resp.read().decode())
+                    for ans in doh_data.get('Answer', []):
+                        val = ans.get('data', '').strip()
+                        if val:
+                            results.append({'value': val, 'type': 'ip', 'relation': 'ipv6'})
+                if not results:
+                    return jsonify({'error': f'No IPv6 (AAAA) records found for {target}'}), 404
+            except Exception as e:
+                return jsonify({'error': f'IPv6 lookup failed: {str(e)}'}), 404
+                
+        elif pivot_type == 'mx':
+            try:
+                url = f'https://cloudflare-dns.com/dns-query?name={target}&type=MX'
+                req = urllib.request.Request(url, headers={'Accept': 'application/dns-json'})
+                with urllib.request.urlopen(req, timeout=4) as resp:
+                    doh_data = json.loads(resp.read().decode())
+                    for ans in doh_data.get('Answer', []):
+                        parts = ans.get('data', '').split()
+                        if len(parts) >= 2:
+                            results.append({'value': parts[1].rstrip('.'), 'type': 'url', 'relation': 'mail server'})
+                if not results:
+                    return jsonify({'error': f'No MX records found for {target}'}), 404
+            except Exception as e:
+                logger.warning(f"MX lookup failed for {target}: {e}")
+                return jsonify({'error': f'MX lookup failed: {str(e)}'}), 404
+
+        elif pivot_type == 'ns':
+            try:
+                url = f'https://cloudflare-dns.com/dns-query?name={target}&type=NS'
+                req = urllib.request.Request(url, headers={'Accept': 'application/dns-json'})
+                with urllib.request.urlopen(req, timeout=4) as resp:
+                    doh_data = json.loads(resp.read().decode())
+                    for ans in doh_data.get('Answer', []):
+                        val = ans.get('data', '').rstrip('.')
+                        if val:
+                            results.append({'value': val, 'type': 'url', 'relation': 'nameserver'})
+                if not results:
+                    return jsonify({'error': f'No NS records found for {target}'}), 404
+            except Exception as e:
+                return jsonify({'error': f'NS lookup failed: {str(e)}'}), 404
+
+        elif pivot_type == 'txt':
+            try:
+                url = f'https://cloudflare-dns.com/dns-query?name={target}&type=TXT'
+                req = urllib.request.Request(url, headers={'Accept': 'application/dns-json'})
+                with urllib.request.urlopen(req, timeout=4) as resp:
+                    doh_data = json.loads(resp.read().decode())
+                    for ans in doh_data.get('Answer', []):
+                        val = ans.get('data', '').strip('"')
+                        if val:
+                            results.append({'value': val[:120], 'type': 'text', 'relation': 'txt record'})
+                if not results:
+                    return jsonify({'error': f'No TXT records found for {target}'}), 404
+            except Exception as e:
+                return jsonify({'error': f'TXT lookup failed: {str(e)}'}), 404
+
+        elif pivot_type == 'subdomains':
+            common_subs = ['www', 'api', 'mail', 'admin', 'dev', 'stage', 'vpn', 'app', 'portal', 'docs', 'status']
+            for s in common_subs:
+                fqdn = f'{s}.{target}'
+                try:
+                    socket.gethostbyname(fqdn)
+                    results.append({'value': fqdn, 'type': 'url', 'relation': 'subdomain'})
+                except Exception:
+                    pass
+            if not results:
+                return jsonify({'error': f'No common subdomains resolved for {target}'}), 404
+
+        # -----------------------------
+        # EMAIL PIVOTS
+        # -----------------------------
+        elif pivot_type == 'email_domain':
+            if domain_part and '.' in domain_part:
+                results.append({'value': domain_part, 'type': 'url', 'relation': 'domain'})
+            else:
+                return jsonify({'error': 'Could not extract valid domain from email'}), 400
+
+        elif pivot_type == 'email_mx':
+            if not domain_part or '.' not in domain_part:
+                return jsonify({'error': 'Invalid domain for email MX lookup'}), 400
+            try:
+                url = f'https://cloudflare-dns.com/dns-query?name={domain_part}&type=MX'
+                req = urllib.request.Request(url, headers={'Accept': 'application/dns-json'})
+                with urllib.request.urlopen(req, timeout=4) as resp:
+                    doh_data = json.loads(resp.read().decode())
+                    for ans in doh_data.get('Answer', []):
+                        parts = ans.get('data', '').split()
+                        if len(parts) >= 2:
+                            results.append({'value': parts[1].rstrip('.'), 'type': 'url', 'relation': 'mail server'})
+                if not results:
+                    return jsonify({'error': f'No MX records found for {domain_part}'}), 404
+            except Exception as e:
+                return jsonify({'error': f'Email MX lookup failed: {str(e)}'}), 404
+
+        # -----------------------------
+        # HASH PIVOTS
+        # -----------------------------
+        elif pivot_type == 'hash_type':
+            h = raw_target.strip().lower()
+            l = len(h)
+            import re
+            if re.match(r'^[0-9a-f]+$', h):
+                if l == 32:
+                    results.append({'value': 'MD5 / NTLM Hash (128-bit)', 'type': 'text', 'relation': 'algorithm'})
+                elif l == 40:
+                    results.append({'value': 'SHA-1 Hash (160-bit)', 'type': 'text', 'relation': 'algorithm'})
+                elif l == 64:
+                    results.append({'value': 'SHA-256 Hash (256-bit)', 'type': 'text', 'relation': 'algorithm'})
+                elif l == 128:
+                    results.append({'value': 'SHA-512 Hash (512-bit)', 'type': 'text', 'relation': 'algorithm'})
+                else:
+                    results.append({'value': f'Hex Digest ({l*4}-bit)', 'type': 'text', 'relation': 'format'})
+            else:
+                return jsonify({'error': 'Target is not a valid hexadecimal hash'}), 400
+                
+        return jsonify({
+            'success': True,
+            'source': raw_target,
+            'target': target,
+            'pivot_type': pivot_type,
+            'results': results
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Pivot API error: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
 @app.errorhandler(404)
 def not_found(error):
-    return jsonify({'error': 'Endpoint non trouvé'}), 404
+    return jsonify({'error': 'Endpoint not found'}), 404
 
 
 @app.errorhandler(500)
 def internal_error(error):
-    logger.error(f"Erreur serveur 500: {str(error)}")
-    return jsonify({'error': 'Erreur interne du serveur'}), 500
+    logger.error(f"Internal server error 500: {str(error)}")
+    return jsonify({'error': 'Internal server error'}), 500
 
 
 if __name__ == '__main__':
@@ -370,7 +635,7 @@ if __name__ == '__main__':
     ║           Version {VERSION}              ║
     ╚═══════════════════════════════════════╝
     
-    🚀 Serveur démarré sur http://127.0.0.1:5000
+    🚀 Server running at http://127.0.0.1:5000
     🔍 Case Management & Intelligence Graph
     """)
     

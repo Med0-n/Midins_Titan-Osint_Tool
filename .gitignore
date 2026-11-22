@@ -1,0 +1,27 @@
+# Python bytecode and caches
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Environments
+venv/
+.venv/
+env/
+ENV/
+
+# Temporary files, back-ups and logs
+*.bak*
+*.tmp
+*.log
+preview_unslop.png
+
+# User uploads & data (keep directory structure)
+uploads/*
+!uploads/.gitkeep
+
+# IDEs & OS specific
+.DS_Store
+.idea/
+.vscode/
+Thumbs.db

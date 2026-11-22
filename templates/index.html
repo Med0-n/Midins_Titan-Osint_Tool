@@ -3,79 +3,685 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>MIDINS TITAN - OSINT Case Management</title>
+    <title>MIDINS TITAN V1.3 - Visual OSINT Workbench</title>
     
     
-    <script src="https://unpkg.com/vis-network@9.1.6/dist/vis-network.min.js"></script>
+    <script src="https://unpkg.com/vis-network@9.1.6/dist/vis-network.min.js">
+// ==========================================
+// V1.4 COMPREHENSIVE INTELLIGENCE EXTENSIONS
+// ==========================================
+
+function escapeHtml(str) {
+    if (!str) return '';
+    return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#039;');
+}
+
+// 1. EXECUTE ALL PIVOTS (DEEP SCAN)
+async function executeAllPivots() {
+    hideContextMenu();
+    
+    const targetNodeId = selectedNode || (network ? network.getSelectedNodes()[0] : null);
+    if (!targetNodeId) {
+        showToast('Please select a node first', 'error');
+        return;
+    }
+    
+    const parentNode = nodes.get(targetNodeId);
+    if (!parentNode) return;
+    
+    let rawTarget = (parentNode.url || parentNode.title || parentNode.label || '').trim();
+    rawTarget = rawTarget.replace(/^(Target|Suspect|Confirmed|To verify|Default)\s*/i, '').trim();
+    if (rawTarget.includes('://')) {
+        try { rawTarget = new URL(rawTarget).hostname; } catch(e) { rawTarget = rawTarget.split('://')[1].split('/')[0].split(':')[0]; }
+    } else {
+        rawTarget = rawTarget.split('/')[0].split(':')[0].trim();
+    }
+    
+    const isIpv4 = /^(\d{1,3}\.){3}\d{1,3}$/.test(rawTarget);
+    const isIpv6 = /^([0-9a-fA-F]{0,4}:){2,7}[0-9a-fA-F]{0,4}$/.test(rawTarget);
+    const isIp = isIpv4 || isIpv6;
+    const isEmail = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/.test(rawTarget);
+    const isHash = /^[a-fA-F0-9]{32,128}$/.test(rawTarget);
+    const isDomain = !isIp && !isEmail && !isHash && rawTarget.includes('.') && !rawTarget.includes(' ') && rawTarget.length > 3;
+    
+    let pivotTypes = [];
+    if (isIp) {
+        pivotTypes = ['geo', 'asn', 'ptr', 'whois'];
+    } else if (isDomain) {
+        pivotTypes = ['dns', 'dns_aaaa', 'mx', 'ns', 'txt', 'subdomains'];
+    } else if (isEmail) {
+        pivotTypes = ['email_domain', 'email_mx'];
+    } else if (isHash) {
+        pivotTypes = ['hash_type'];
+    }
+    
+    if (pivotTypes.length === 0) {
+        showToast('No automated pivots available for this entity', 'info');
+        return;
+    }
+    
+    showToast(`Deep Scan: running ${pivotTypes.length} pivots on ${rawTarget}...`, 'info');
+    
+    try {
+        const promises = pivotTypes.map(pt => 
+            fetch('/api/pivot', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ target: rawTarget, pivot_type: pt })
+            }).then(r => r.json())
+        );
+        
+        const responses = await Promise.allSettled(promises);
+        let allResults = [];
+        responses.forEach(res => {
+            if (res.status === 'fulfilled' && res.value && res.value.results) {
+                allResults = allResults.concat(res.value.results);
+            }
+        });
+        
+        if (allResults.length === 0) {
+            showToast('No new records discovered across all pivots', 'info');
+            return;
+        }
+        
+        const parentPos = network.getPosition(targetNodeId) || { x: 0, y: 0 };
+        const radius = Math.max(180, allResults.length * 20);
+        let addedCount = 0;
+        
+        allResults.forEach((res, index) => {
+            const angle = (2 * Math.PI / Math.max(allResults.length, 1)) * index + (Math.PI / 4);
+            const posX = parentPos.x + radius * Math.cos(angle);
+            const posY = parentPos.y + radius * Math.sin(angle);
+            
+            const existing = nodes.get({
+                filter: function (item) {
+                    return item.label === res.value || item.title === res.value;
+                }
+            });
+            
+            let childId;
+            if (existing && existing.length > 0) {
+                childId = existing[0].id;
+            } else {
+                childId = nodeIdCounter++;
+                const colors = INPUT_TYPE_COLORS[res.type] || INPUT_TYPE_COLORS.text;
+                nodes.add({
+                    id: childId,
+                    label: res.value,
+                    title: res.value,
+                    inputType: res.type,
+                    shape: 'box',
+                    x: posX,
+                    y: posY,
+                    color: {
+                        background: colors.bg,
+                        border: colors.border
+                    }
+                });
+                addedCount++;
+            }
+            
+            const existingEdge = edges.get({
+                filter: function (edge) {
+                    return (edge.from === targetNodeId && edge.to === childId) ||
+                           (edge.from === childId && edge.to === targetNodeId);
+                }
+            });
+            
+            if (!existingEdge || existingEdge.length === 0) {
+                edges.add({
+                    id: `edge_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`,
+                    from: targetNodeId,
+                    to: childId,
+                    label: res.relation,
+                    arrows: { to: { enabled: true, scaleFactor: 0.55 } },
+                    font: { size: 10, align: 'middle', color: '#94a3b8', background: 'rgba(15, 18, 26, 0.85)' },
+                    color: {
+                        color: 'rgba(255, 255, 255, 0.2)',
+                        highlight: 'var(--accent-primary)',
+                        hover: 'var(--accent-primary)'
+                    }
+                });
+            }
+        });
+        
+        network.setOptions({ physics: { enabled: true, stabilization: false } });
+        setTimeout(() => {
+            network.setOptions({ physics: { enabled: false } });
+        }, 800);
+        
+        saveGraph();
+        pushHistory();
+        updateStats();
+        logInvestigationEvent('Deep Scan (All Pivots)', rawTarget, `Discovered ${allResults.length} entities`);
+        
+        showToast(`Deep Scan complete: ${allResults.length} entities connected!`, 'success');
+        
+    } catch (err) {
+        console.error('All pivots error:', err);
+        showToast('Server error executing batch pivots', 'error');
+    }
+}
+
+// 2. INVESTIGATION TIMELINE & AUDIT LOG
+let investigationTimeline = [];
+
+function logInvestigationEvent(action, target, details) {
+    const time = new Date().toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    investigationTimeline.unshift({ time, action, target, details });
+    if (investigationTimeline.length > 50) investigationTimeline.pop();
+    renderInvestigationTimeline();
+}
+
+function renderInvestigationTimeline() {
+    const list = document.getElementById('timelineList');
+    if (!list) return;
+    if (investigationTimeline.length === 0) {
+        list.innerHTML = '<div style="font-size:11px;color:var(--text-muted);padding:8px 0;">No investigation events logged yet.</div>';
+        return;
+    }
+    list.innerHTML = investigationTimeline.map(ev => `
+        <div class="timeline-item" onclick="focusNodeByLabel('${escapeHtml(ev.target)}')">
+            <div class="timeline-header">
+                <span style="font-weight:600;color:var(--accent-primary);">${escapeHtml(ev.action)}</span>
+                <span>${ev.time}</span>
+            </div>
+            <div class="timeline-action">${escapeHtml(ev.target)}</div>
+            ${ev.details ? `<div class="timeline-detail">${escapeHtml(ev.details)}</div>` : ''}
+        </div>
+    `).join('');
+}
+
+function focusNodeByLabel(label) {
+    if (!nodes || !network) return;
+    const match = nodes.get({
+        filter: n => n.label === label || n.title === label || (n.url && n.url.includes(label))
+    });
+    if (match && match.length > 0) {
+        selectAndFocusNode(match[0].id);
+    }
+}
+
+function switchSidebarTab(tabName) {
+    document.querySelectorAll('.sidebar-tab').forEach(b => b.classList.remove('active'));
+    const tabBtn = document.getElementById('tab' + tabName.charAt(0).toUpperCase() + tabName.slice(1));
+    if (tabBtn) tabBtn.classList.add('active');
+    
+    document.getElementById('toolsContainer').style.display = tabName === 'tools' ? 'block' : 'none';
+    document.getElementById('variablesContainer').style.display = tabName === 'vars' ? 'block' : 'none';
+    document.getElementById('timelineContainer').style.display = tabName === 'timeline' ? 'flex' : 'none';
+    
+    if (tabName === 'timeline') {
+        renderInvestigationTimeline();
+    }
+}
+
+// 3. CANVAS FILTER HUD BAR
+let activeFilterType = 'all';
+
+function updateFilterHud() {
+    const hud = document.getElementById('canvasFilterHud');
+    if (!hud || !nodes) return;
+    const all = nodes.get();
+    if (all.length === 0) {
+        hud.innerHTML = '<button class="filter-chip active" onclick="filterGraphByType(\'all\')">All: 0</button>';
+        return;
+    }
+    
+    const counts = {};
+    all.forEach(n => {
+        const t = n.inputType || 'text';
+        counts[t] = (counts[t] || 0) + 1;
+    });
+    
+    let html = `<button class="filter-chip ${activeFilterType === 'all' ? 'active' : ''}" onclick="filterGraphByType('all')">All: ${all.length}</button>`;
+    for (const [t, count] of Object.entries(counts)) {
+        const label = INPUT_TYPE_LABELS[t] || t.toUpperCase();
+        html += `<button class="filter-chip ${activeFilterType === t ? 'active' : ''}" onclick="filterGraphByType('${t}')">${label}: ${count}</button>`;
+    }
+    hud.innerHTML = html;
+}
+
+function filterGraphByType(type) {
+    activeFilterType = type;
+    updateFilterHud();
+    if (!nodes) return;
+    
+    if (type === 'all') {
+        nodes.forEach(n => {
+            nodes.update({ id: n.id, opacity: 1 });
+        });
+        showToast('Showing all entities', 'info');
+    } else {
+        nodes.forEach(n => {
+            const matches = (n.inputType || 'text') === type;
+            nodes.update({ id: n.id, opacity: matches ? 1 : 0.12 });
+        });
+        showToast(`Filter applied: ${INPUT_TYPE_LABELS[type] || type}`, 'info');
+    }
+}
+
+// 4. GRAPH LAYOUT ENGINES
+function toggleLayoutMenu() {
+    const menu = document.getElementById('layoutDropdownMenu');
+    if (menu) menu.classList.toggle('show');
+}
+
+function applyLayoutMode(mode) {
+    if (!network) return;
+    const menu = document.getElementById('layoutDropdownMenu');
+    if (menu) menu.classList.remove('show');
+    
+    if (mode === 'organic') {
+        showToast('Applying Organic Physics layout...', 'info');
+        network.setOptions({
+            layout: { hierarchical: { enabled: false } },
+            physics: {
+                enabled: true,
+                solver: 'forceAtlas2Based',
+                forceAtlas2Based: {
+                    gravitationalConstant: -60,
+                    centralGravity: 0.015,
+                    springLength: 120,
+                    springConstant: 0.08,
+                    damping: 0.4
+                }
+            }
+        });
+        setTimeout(() => {
+            network.setOptions({ physics: { enabled: false } });
+            network.fit({ animation: true });
+        }, 1200);
+    } else if (mode === 'hierarchy') {
+        showToast('Applying Hierarchical (Top-Down) layout...', 'info');
+        network.setOptions({
+            layout: {
+                hierarchical: {
+                    enabled: true,
+                    direction: 'UD',
+                    sortMethod: 'directed',
+                    nodeSpacing: 180,
+                    levelSeparation: 130
+                }
+            },
+            physics: { enabled: false }
+        });
+        setTimeout(() => network.fit({ animation: true }), 300);
+    } else if (mode === 'horizontal') {
+        showToast('Applying Horizontal (Left-Right) layout...', 'info');
+        network.setOptions({
+            layout: {
+                hierarchical: {
+                    enabled: true,
+                    direction: 'LR',
+                    sortMethod: 'directed',
+                    nodeSpacing: 160,
+                    levelSeparation: 160
+                }
+            },
+            physics: { enabled: false }
+        });
+        setTimeout(() => network.fit({ animation: true }), 300);
+    } else if (mode === 'circular') {
+        showToast('Applying Radial Cluster layout...', 'info');
+        network.setOptions({
+            layout: {
+                hierarchical: {
+                    enabled: true,
+                    direction: 'LR',
+                    sortMethod: 'hubsize',
+                    nodeSpacing: 160,
+                    levelSeparation: 140
+                }
+            },
+            physics: { enabled: false }
+        });
+        setTimeout(() => network.fit({ animation: true }), 300);
+    }
+}
+
+// 5. EXTERNAL ENRICHMENT SHORTCUTS
+function updateExternalLinksForNode(node) {
+    const container = document.getElementById('externalLinksContainer');
+    const sec = document.getElementById('externalLinksSection');
+    if (!container || !node) return;
+    
+    let raw = (node.url || node.title || node.label || '').trim();
+    raw = raw.replace(/^(Target|Suspect|Confirmed|To verify|Default)\s*/i, '').trim();
+    if (raw.includes('://')) {
+        try { raw = new URL(raw).hostname; } catch(e) { raw = raw.split('://')[1].split('/')[0].split(':')[0]; }
+    } else {
+        raw = raw.split('/')[0].split(':')[0].trim();
+    }
+    
+    const isIp = /^(\d{1,3}\.){3}\d{1,3}$/.test(raw) || /^([0-9a-fA-F]{0,4}:){2,7}[0-9a-fA-F]{0,4}$/.test(raw);
+    const isEmail = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/.test(raw);
+    const isHash = /^[a-fA-F0-9]{32,128}$/.test(raw);
+    const isDomain = !isIp && !isEmail && !isHash && raw.includes('.') && !raw.includes(' ');
+    
+    let links = [];
+    if (isIp) {
+        links = [
+            { name: 'VirusTotal', url: `https://www.virustotal.com/gui/ip-address/${raw}` },
+            { name: 'Shodan', url: `https://www.shodan.io/host/${raw}` },
+            { name: 'AbuseIPDB', url: `https://www.abuseipdb.com/check/${raw}` },
+            { name: 'BGPView', url: `https://bgpview.io/ip/${raw}` }
+        ];
+    } else if (isDomain) {
+        links = [
+            { name: 'VirusTotal', url: `https://www.virustotal.com/gui/domain/${raw}` },
+            { name: 'urlscan.io', url: `https://urlscan.io/domain/${raw}` },
+            { name: 'Wayback', url: `https://web.archive.org/web/*/${raw}` },
+            { name: 'crt.sh', url: `https://crt.sh/?q=${raw}` }
+        ];
+    } else if (isEmail) {
+        links = [
+            { name: 'Hunter.io', url: `https://hunter.io/verify/${raw}` },
+            { name: 'HIBP', url: `https://haveibeenpwned.com/` }
+        ];
+    } else if (isHash) {
+        links = [
+            { name: 'VirusTotal', url: `https://www.virustotal.com/gui/file/${raw}` },
+            { name: 'MalwareBazaar', url: `https://bazaar.abuse.ch/sample/${raw}` }
+        ];
+    }
+    
+    if (links.length > 0) {
+        if (sec) sec.style.display = 'block';
+        container.innerHTML = links.map(l => `
+            <a href="${l.url}" target="_blank" rel="noopener noreferrer" class="external-link-btn" title="Open ${l.name}">
+                <span>${l.name}</span>
+                <span style="font-size:10px;opacity:0.7;">↗</span>
+            </a>
+        `).join('');
+    } else {
+        if (sec) sec.style.display = 'none';
+        container.innerHTML = '';
+    }
+}
+
+// 6. CLICK-TO-COPY
+function copyNodeNameToClipboard() {
+    const el = document.getElementById('nodeName');
+    if (!el || !el.textContent) return;
+    const val = el.textContent.trim();
+    navigator.clipboard.writeText(val).then(() => {
+        showToast(`Copied to clipboard: ${val}`, 'success');
+    }).catch(() => {
+        showToast('Failed to copy', 'error');
+    });
+}
+
+// 7. COMMAND PALETTE (⌘K / Ctrl+K)
+function openCommandPalette() {
+    const modal = document.getElementById('commandPaletteModal');
+    if (!modal) return;
+    modal.classList.add('show');
+    const input = document.getElementById('commandPaletteInput');
+    if (input) {
+        input.value = '';
+        setTimeout(() => input.focus(), 60);
+        renderCommandPaletteResults('');
+    }
+}
+
+function closeCommandPalette() {
+    const modal = document.getElementById('commandPaletteModal');
+    if (modal) modal.classList.remove('show');
+}
+
+function renderCommandPaletteResults(query) {
+    const container = document.getElementById('commandPaletteResults');
+    if (!container) return;
+    const q = query.trim().toLowerCase();
+    
+    let html = '';
+    
+    // Matched nodes
+    const all = nodes ? nodes.get() : [];
+    const matchedNodes = q ? all.filter(n => (n.label || '').toLowerCase().includes(q) || (n.inputType || '').toLowerCase().includes(q)) : all.slice(0, 6);
+    
+    if (matchedNodes.length > 0) {
+        html += `<div class="palette-section-title">GRAPH ENTITIES (${matchedNodes.length})</div>`;
+        html += matchedNodes.map(n => `
+            <div class="palette-item" onclick="selectAndFocusNode(${n.id}); closeCommandPalette();">
+                <span class="palette-badge" style="background:rgba(255,255,255,0.06);color:var(--accent-primary);">${INPUT_TYPE_LABELS[n.inputType] || 'ENTITY'}</span>
+                <span class="palette-item-text">${escapeHtml(n.label)}</span>
+                <span class="palette-item-action">Jump ↵</span>
+            </div>
+        `).join('');
+    }
+    
+    // Global Actions
+    const actions = [
+        { name: 'Run All Pivots on Selection', action: 'executeAllPivots()', badge: 'DEEP PIVOT' },
+        { name: 'Layout: Organic (Physics Settle)', action: "applyLayoutMode('organic')", badge: 'LAYOUT' },
+        { name: 'Layout: Hierarchical (Top-Down)', action: "applyLayoutMode('hierarchy')", badge: 'LAYOUT' },
+        { name: 'Layout: Horizontal (Left-Right)', action: "applyLayoutMode('horizontal')", badge: 'LAYOUT' },
+        { name: 'Layout: Radial Cluster', action: "applyLayoutMode('circular')", badge: 'LAYOUT' },
+        { name: 'Fit Graph to Viewport', action: 'network.fit({ animation: true })', badge: 'VIEW' },
+        { name: 'Export Markdown Investigation Report', action: 'exportMarkdownReport()', badge: 'EXPORT' },
+        { name: 'Export Graph Case (JSON)', action: 'exportGraph()', badge: 'EXPORT' },
+        { name: 'Capture PNG Graph Snapshot', action: 'captureGraphPNG()', badge: 'EXPORT' },
+        { name: 'Color Themes & Harmony', action: 'openThemeModal()', badge: 'THEME' },
+        { name: 'Clear Entire Graph', action: 'clearGraph()', badge: 'DANGER' }
+    ];
+    
+    const matchedActions = q ? actions.filter(a => a.name.toLowerCase().includes(q)) : actions;
+    if (matchedActions.length > 0) {
+        html += `<div class="palette-section-title">ACTIONS & WORKFLOWS</div>`;
+        html += matchedActions.map(a => `
+            <div class="palette-item" onclick="${a.action}; closeCommandPalette();">
+                <span class="palette-badge" style="background:rgba(255,255,255,0.06);color:var(--text-secondary);">${a.badge}</span>
+                <span class="palette-item-text">${a.name}</span>
+                <span class="palette-item-action">Run ↵</span>
+            </div>
+        `).join('');
+    }
+    
+    container.innerHTML = html;
+}
+
+function onCommandPaletteInput(val) {
+    renderCommandPaletteResults(val);
+}
+
+function onCommandPaletteKeydown(e) {
+    if (e.key === 'Escape') {
+        closeCommandPalette();
+    }
+}
+
+function selectAndFocusNode(nodeId) {
+    if (!network || !nodes) return;
+    selectedNode = nodeId;
+    network.selectNodes([nodeId]);
+    showRightPanel();
+    updatePivotOptionsForNode(nodeId);
+    network.focus(nodeId, {
+        scale: 1.2,
+        animation: {
+            duration: 600,
+            easingFunction: 'easeInOutQuad'
+        }
+    });
+}
+
+</script>
     <link href="https://unpkg.com/vis-network@9.1.6/dist/dist/vis-network.min.css" rel="stylesheet" type="text/css" />
     
     
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;500;600;700;900&family=JetBrains+Mono:wght@300;400;500&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500;600;700&family=Geist+Mono:wght@400;500;600&display=swap" rel="stylesheet">
     
     <style>
-        /* ================================
-           CSS VARIABLES & RESET
-           ================================ */
+        
+        ::selection {
+            background: rgba(59, 130, 246, 0.28);
+            color: #ffffff;
+        }
+
+        .logo {
+            letter-spacing: -0.025em;
+            font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+        }
+
+        .btn {
+            letter-spacing: -0.01em;
+            font-feature-settings: "cv02", "cv03";
+        }
+
+        .master-search {
+            font-feature-settings: "zero";
+        }
+
+        
+        /* Brand & Logo Styles */
+        .brand-mark {
+            width: 26px;
+            height: 26px;
+            background: var(--bg-elevated);
+            border: 1px solid var(--border-color);
+            border-radius: var(--radius-sm);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: var(--accent-primary);
+            transition: color 0.15s ease, border-color 0.15s ease;
+        }
+        .brand-title {
+            font-family: 'Geist', sans-serif;
+            font-size: 13px;
+            font-weight: 700;
+            letter-spacing: 0.04em;
+            color: var(--text-primary);
+        }
+        .brand-accent {
+            color: var(--accent-primary);
+            font-weight: 800;
+            transition: color 0.15s ease;
+        }
+
+        /* Theme Modal Styles */
+        .theme-presets-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 8px;
+        }
+        .theme-card {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 8px 10px;
+            background: var(--bg-elevated);
+            border: 1px solid var(--border-color);
+            border-radius: var(--radius-sm);
+            cursor: pointer;
+            transition: border-color 0.12s ease-out, background-color 0.12s ease-out;
+        }
+        .theme-card:hover {
+            border-color: var(--border-hover);
+            background: var(--bg-hover);
+        }
+        .theme-card.active {
+            border-color: var(--accent-primary);
+            background: rgba(255, 255, 255, 0.04);
+        }
+        .theme-preview {
+            width: 22px;
+            height: 22px;
+            border-radius: 4px;
+            border: 1px solid rgba(255, 255, 255, 0.12);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex-shrink: 0;
+        }
+        .theme-dot {
+            width: 7px;
+            height: 7px;
+            border-radius: 50%;
+        }
+        .theme-info {
+            flex: 1;
+            min-width: 0;
+        }
+        .theme-name {
+            font-size: 11px;
+            font-weight: 600;
+            color: var(--text-primary);
+        }
+        .theme-desc {
+            font-size: 10px;
+            color: var(--text-muted);
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        /* ========================================================
+           UNSLOP DESIGN SYSTEM — STRICT SPECIFICATION
+           Compliant with unslop-ui (U1 to U24) and heydamir/unslop
+           ======================================================== */
         :root {
-            /* Primary colors */
-            --bg-deep: #0b0e14;
-            --bg-panel: #151921;
-            --bg-elevated: #1c2028;
-            --bg-hover: #232932;
+            /* Surfaces (Neutral dark slate, matte, no glowing color blobs) */
+            --bg-deep: #090d16;
+            --bg-panel: #0d131f;
+            --bg-elevated: #131b2c;
+            --bg-hover: #182238;
+            --bg-active: #1f2b47;
             
-            /* Accents */
-            --accent-primary: #a371f7;
-            --accent-secondary: #7c3aed;
-            --accent-glow: rgba(163, 113, 247, 0.3);
+            /* Accents (Quiet, purposeful) */
+            --accent-primary: #2563eb;
+            --accent-hover: #1d4ed8;
+            --accent-active: #1e40af;
             
-            /* Cyber colors */
-            --cyber-blue: #00d9ff;
-            --cyber-pink: #ff006e;
-            --cyber-green: #00ff88;
+            /* Status colors (semantic only, no neon saturation) */
+            --status-target: #e11d48;
+            --status-validated: #059669;
+            --status-suspect: #d97706;
+            --status-pending: #0284c7;
+            --status-default: #64748b;
             
-            /* Status colors */
-            --status-target: #ff4757;
-            --status-validated: #1dd1a1;
-            --status-info: #5f27cd;
+            /* Typography */
+            --text-primary: #f8fafc;
+            --text-secondary: #94a3b8;
+            --text-muted: #64748b;
             
-            /* Text */
-            --text-primary: #e8eaed;
-            --text-secondary: #9ca3af;
-            --text-muted: #6b7280;
+            /* Borders (Hairline 1px, quiet) */
+            --border-color: rgba(255, 255, 255, 0.08);
+            --border-hover: rgba(255, 255, 255, 0.16);
+            --border-focus: #3b82f6;
             
-            /* Borders */
-            --border-color: rgba(163, 113, 247, 0.15);
-            --border-hover: rgba(163, 113, 247, 0.4);
+            /* Shadows (Quiet, 1-2px, no colored glows) */
+            --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
+            --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.35);
+            --shadow-lg: 0 12px 28px rgba(0, 0, 0, 0.5);
             
-            /* Shadows */
-            --shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.4);
-            --shadow-md: 0 4px 16px rgba(0, 0, 0, 0.5);
-            --shadow-lg: 0 8px 32px rgba(0, 0, 0, 0.6);
-            --shadow-glow: 0 0 20px var(--accent-glow);
-            
-            /* Transitions */
-            --transition-fast: 0.15s ease;
-            --transition-base: 0.3s ease;
-            --transition-slow: 0.5s ease;
-            
-            /* Spacing */
+            /* Standard Spacing Scale (4, 8, 12, 16, 20, 24, 32) */
             --spacing-xs: 4px;
             --spacing-sm: 8px;
-            --spacing-md: 16px;
-            --spacing-lg: 24px;
-            --spacing-xl: 32px;
+            --spacing-md: 12px;
+            --spacing-lg: 16px;
+            --spacing-xl: 24px;
+            
+            /* Radii */
+            --radius-sm: 4px;
+            --radius-md: 6px;
+            --radius-lg: 8px;
         }
         
         * {
             margin: 0;
             padding: 0;
             box-sizing: border-box;
+            -webkit-font-smoothing: antialiased;
+            -moz-osx-font-smoothing: grayscale;
         }
         
         body {
-            font-family: 'JetBrains Mono', monospace;
+            font-family: 'Geist', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
             background: var(--bg-deep);
             color: var(--text-primary);
             overflow: hidden;
@@ -83,9 +689,7 @@
             position: relative;
         }
         
-        /* ================================
-           GRID BACKGROUND CYBERPUNK
-           ================================ */
+        /* Architectural Canvas Grid (Technical, 40px grid) */
         body::before {
             content: '';
             position: fixed;
@@ -94,34 +698,80 @@
             width: 100%;
             height: 100%;
             background-image: 
-                radial-gradient(circle at 2px 2px, rgba(163, 113, 247, 0.08) 1px, transparent 0);
-            background-size: 32px 32px;
+                linear-gradient(to right, rgba(255, 255, 255, 0.02) 1px, transparent 1px),
+                linear-gradient(to bottom, rgba(255, 255, 255, 0.02) 1px, transparent 1px);
+            background-size: 40px 40px;
             pointer-events: none;
             z-index: 0;
         }
         
-        /* Scanline effect */
-        body::after {
-            content: '';
-            position: fixed;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            background: linear-gradient(
-                to bottom,
-                transparent 50%,
-                rgba(163, 113, 247, 0.02) 50%
-            );
-            background-size: 100% 4px;
-            pointer-events: none;
-            z-index: 1;
-            animation: scanline 8s linear infinite;
+        .brand-version {
+            font-family: 'Geist Mono', monospace;
+            font-size: 10px;
+            color: var(--text-muted);
+            background: rgba(255, 255, 255, 0.06);
+            border: 1px solid var(--border-color);
+            padding: 1px 5px;
+            border-radius: var(--radius-sm);
+            margin-left: 6px;
         }
         
-        @keyframes scanline {
-            0% { transform: translateY(0); }
-            100% { transform: translateY(4px); }
+        .status-indicator {
+            display: inline-block;
+            width: 6px;
+            height: 6px;
+            border-radius: 50%;
+            background: #10b981;
+            margin-right: 6px;
+        }
+
+        .pivot-card-btn {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            width: 100%;
+            padding: 7px 10px;
+            background: var(--bg-elevated);
+            border: 1px solid var(--border-color);
+            border-radius: var(--radius-sm);
+            cursor: pointer;
+            text-align: left;
+            transition: background-color 0.12s ease-out, border-color 0.12s ease-out;
+            margin-bottom: 4px;
+        }
+        .pivot-card-btn:hover {
+            background: var(--bg-hover);
+            border-color: var(--border-hover);
+        }
+        .pivot-info {
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
+            min-width: 0;
+        }
+        .pivot-title {
+            font-size: 11px;
+            font-weight: 600;
+            color: var(--text-primary);
+        }
+        .pivot-desc {
+            font-size: 10px;
+            color: var(--text-muted);
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        .pivot-badge {
+            font-family: 'Geist Mono', monospace;
+            font-size: 9px;
+            font-weight: 600;
+            color: var(--accent-primary);
+            background: rgba(59, 130, 246, 0.08);
+            border: 1px solid rgba(59, 130, 246, 0.2);
+            padding: 2px 6px;
+            border-radius: 3px;
+            flex-shrink: 0;
+            margin-left: 8px;
         }
         
         /* ================================
@@ -135,319 +785,320 @@
         }
         
         /* ================================
-           HEADER BAR
+           HEADER BAR (U1, U3, U6, U11)
            ================================ */
         .header-bar {
             position: fixed;
             top: 0;
             left: 0;
             right: 0;
-            height: 60px;
+            height: 48px;
             background: var(--bg-panel);
             border-bottom: 1px solid var(--border-color);
             display: flex;
             align-items: center;
             justify-content: space-between;
-            padding: 0 var(--spacing-lg);
+            padding: 0 16px;
             z-index: 1000;
-            box-shadow: var(--shadow-md);
         }
         
         .logo-section {
             display: flex;
             align-items: center;
-            gap: var(--spacing-md);
+            gap: 10px;
         }
         
         .logo {
-            font-family: 'Orbitron', sans-serif;
-            font-size: 24px;
-            font-weight: 900;
-            background: linear-gradient(135deg, var(--accent-primary), var(--cyber-blue));
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
-            background-clip: text;
-            letter-spacing: 2px;
-            text-shadow: 0 0 30px var(--accent-glow);
+            font-size: 13px;
+            font-weight: 600;
+            color: var(--text-primary);
+            letter-spacing: -0.01em;
         }
         
-        .logo-subtitle {
-            font-size: 10px;
+        .version-tag {
+            font-family: 'Geist Mono', monospace;
+            font-size: 11px;
+            color: var(--text-muted);
+            background: rgba(255, 255, 255, 0.05);
+            padding: 1px 6px;
+            border-radius: var(--radius-sm);
+            border: 1px solid var(--border-color);
+        }
+
+        /* Stats badge in header (U6, U10: Quiet text, no colored pulsing dots) */
+        .stats-badge {
+            display: flex;
+            gap: 8px;
+            align-items: center;
+            font-size: 12px;
+            color: var(--text-muted);
+            font-family: 'Geist Mono', monospace;
+        }
+
+        .stats-badge .stat-item {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+        }
+
+        .stats-badge .stat-value {
             color: var(--text-secondary);
-            text-transform: uppercase;
-            letter-spacing: 3px;
-            margin-top: -4px;
+            font-weight: 500;
+        }
+
+        .stats-badge .stat-sep {
+            color: rgba(255, 255, 255, 0.15);
         }
         
         .header-actions {
             display: flex;
-            gap: var(--spacing-sm);
+            gap: 6px;
+            align-items: center;
         }
         
         /* ================================
-           BUTTONS
+           BUTTONS (U17: Solid neutral surfaces, no gradients or glows)
            ================================ */
         .btn {
-            padding: 10px 20px;
+            padding: 5px 11px;
             border: 1px solid var(--border-color);
             background: var(--bg-elevated);
             color: var(--text-primary);
-            font-family: 'JetBrains Mono', monospace;
+            font-family: 'Geist', sans-serif;
             font-size: 12px;
             cursor: pointer;
-            transition: all var(--transition-base);
-            border-radius: 6px;
-            text-transform: uppercase;
-            letter-spacing: 1px;
+            transition: background-color 0.12s ease-out, border-color 0.12s ease-out;
+            border-radius: var(--radius-sm);
             font-weight: 500;
-            position: relative;
-            overflow: hidden;
-        }
-        
-        .btn::before {
-            content: '';
-            position: absolute;
-            top: 0;
-            left: -100%;
-            width: 100%;
-            height: 100%;
-            background: linear-gradient(90deg, transparent, rgba(163, 113, 247, 0.2), transparent);
-            transition: left var(--transition-slow);
-        }
-        
-        .btn:hover::before {
-            left: 100%;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            line-height: 1.3;
         }
         
         .btn:hover {
             border-color: var(--border-hover);
             background: var(--bg-hover);
-            transform: translateY(-1px);
-            box-shadow: var(--shadow-glow);
+        }
+
+        .btn:active {
+            background: var(--bg-active);
         }
         
         .btn-primary {
             background: var(--accent-primary);
-            border-color: var(--accent-primary);
-            color: white;
+            border-color: var(--accent-hover);
+            color: #ffffff;
         }
         
         .btn-primary:hover {
-            background: var(--accent-secondary);
-            border-color: var(--accent-secondary);
+            background: var(--accent-hover);
+            border-color: var(--accent-active);
+        }
+
+        .btn-sm {
+            padding: 4px 8px;
+            font-size: 11px;
+        }
+
+        .btn-danger {
+            border-color: rgba(225, 29, 72, 0.35);
+            color: #fda4af;
+            background: rgba(225, 29, 72, 0.08);
+        }
+
+        .btn-danger:hover {
+            background: var(--status-target);
+            border-color: var(--status-target);
+            color: #ffffff;
         }
         
         /* ================================
-           SIDEBAR
+           SIDEBAR (U1, U7, U18)
            ================================ */
         .sidebar {
-            width: 350px;
+            width: 300px;
             background: var(--bg-panel);
             border-right: 1px solid var(--border-color);
             display: flex;
             flex-direction: column;
-            margin-top: 60px;
-            height: calc(100vh - 60px);
+            margin-top: 48px;
+            height: calc(100vh - 48px);
             position: relative;
-            box-shadow: var(--shadow-lg);
-        }
-        
-        .sidebar::before {
-            content: '';
-            position: absolute;
-            top: 0;
-            right: 0;
-            width: 1px;
-            height: 100%;
-            background: linear-gradient(
-                to bottom,
-                transparent,
-                var(--accent-primary),
-                transparent
-            );
-            animation: borderGlow 3s ease-in-out infinite;
-        }
-        
-        @keyframes borderGlow {
-            0%, 100% { opacity: 0.3; }
-            50% { opacity: 1; }
+            z-index: 10;
         }
         
         .search-section {
-            padding: var(--spacing-lg);
+            padding: 12px;
             border-bottom: 1px solid var(--border-color);
         }
         
         .search-label {
             font-size: 11px;
-            text-transform: uppercase;
-            letter-spacing: 2px;
-            color: var(--text-secondary);
-            margin-bottom: var(--spacing-sm);
             font-weight: 500;
+            color: var(--text-muted);
+            margin-bottom: 6px;
         }
         
         .master-search {
             width: 100%;
-            padding: 12px 16px;
+            padding: 7px 10px;
             background: var(--bg-deep);
             border: 1px solid var(--border-color);
-            border-radius: 6px;
+            border-radius: var(--radius-sm);
             color: var(--text-primary);
-            font-family: 'JetBrains Mono', monospace;
-            font-size: 13px;
-            transition: all var(--transition-base);
+            font-family: 'Geist Mono', monospace;
+            font-size: 12px;
+            transition: border-color 0.12s ease-out;
         }
         
         .master-search:focus {
             outline: none;
-            border-color: var(--accent-primary);
-            box-shadow: 0 0 0 3px var(--accent-glow), var(--shadow-md);
+            border-color: var(--border-focus);
         }
         
         .master-search::placeholder {
             color: var(--text-muted);
+            font-family: 'Geist', sans-serif;
+            font-size: 12px;
         }
+
+        /* Smart input type indicator (U9: quiet state) */
+        .input-type-badge {
+            display: none;
+            font-size: 11px;
+            padding: 2px 6px;
+            border-radius: var(--radius-sm);
+            margin-top: 6px;
+            font-weight: 500;
+            font-family: 'Geist Mono', monospace;
+        }
+
+        .input-type-badge.visible {
+            display: inline-block;
+        }
+
+        .input-type-badge.type-url { background: rgba(2, 132, 199, 0.15); color: #38bdf8; border: 1px solid rgba(2, 132, 199, 0.3); }
+        .input-type-badge.type-email { background: rgba(99, 102, 241, 0.15); color: #a5b4fc; border: 1px solid rgba(99, 102, 241, 0.3); }
+        .input-type-badge.type-ip { background: rgba(217, 119, 6, 0.15); color: #fcd34d; border: 1px solid rgba(217, 119, 6, 0.3); }
+        .input-type-badge.type-phone { background: rgba(5, 150, 105, 0.15); color: #6ee7b7; border: 1px solid rgba(5, 150, 105, 0.3); }
+        .input-type-badge.type-hash { background: rgba(225, 29, 72, 0.15); color: #fda4af; border: 1px solid rgba(225, 29, 72, 0.3); }
+        .input-type-badge.type-text { background: rgba(100, 116, 139, 0.15); color: #cbd5e1; border: 1px solid rgba(100, 116, 139, 0.3); }
         
         .tools-section {
             flex: 1;
             overflow-y: auto;
-            padding: var(--spacing-lg);
+            padding: 12px;
         }
         
         /* Custom scrollbar */
-        .tools-section::-webkit-scrollbar {
-            width: 8px;
+        .tools-section::-webkit-scrollbar,
+        .panel-content::-webkit-scrollbar,
+        .modal::-webkit-scrollbar {
+            width: 5px;
         }
         
-        .tools-section::-webkit-scrollbar-track {
-            background: var(--bg-deep);
+        .tools-section::-webkit-scrollbar-track,
+        .panel-content::-webkit-scrollbar-track,
+        .modal::-webkit-scrollbar-track {
+            background: transparent;
         }
         
-        .tools-section::-webkit-scrollbar-thumb {
-            background: var(--accent-primary);
-            border-radius: 4px;
-        }
-        
-        .tools-section::-webkit-scrollbar-thumb:hover {
-            background: var(--accent-secondary);
+        .tools-section::-webkit-scrollbar-thumb,
+        .panel-content::-webkit-scrollbar-thumb,
+        .modal::-webkit-scrollbar-thumb {
+            background: rgba(255, 255, 255, 0.12);
+            border-radius: 3px;
         }
         
         .tool-category {
-            margin-bottom: var(--spacing-xl);
+            margin-bottom: 16px;
         }
         
         .category-header {
             display: flex;
             justify-content: space-between;
             align-items: center;
-            margin-bottom: var(--spacing-md);
-            padding-bottom: var(--spacing-sm);
+            margin-bottom: 6px;
+            padding-bottom: 4px;
             border-bottom: 1px solid var(--border-color);
         }
         
         .category-title {
-            font-family: 'Orbitron', sans-serif;
-            font-size: 12px;
-            font-weight: 700;
-            text-transform: uppercase;
-            letter-spacing: 2px;
-            color: var(--accent-primary);
+            font-size: 11px;
+            font-weight: 600;
+            color: var(--text-secondary);
         }
         
         .category-actions {
             display: flex;
-            gap: var(--spacing-xs);
+            gap: 2px;
         }
         
         .icon-btn {
-            width: 24px;
-            height: 24px;
+            padding: 2px 5px;
             border: none;
             background: transparent;
-            color: var(--text-secondary);
+            color: var(--text-muted);
             cursor: pointer;
-            transition: all var(--transition-fast);
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            border-radius: 4px;
+            font-size: 11px;
+            border-radius: var(--radius-sm);
         }
         
         .icon-btn:hover {
-            color: var(--accent-primary);
+            color: var(--text-primary);
             background: var(--bg-hover);
         }
         
         .tool-item {
-            padding: 10px 12px;
+            padding: 7px 9px;
             background: var(--bg-elevated);
             border: 1px solid var(--border-color);
-            border-radius: 6px;
-            margin-bottom: var(--spacing-sm);
+            border-radius: var(--radius-sm);
+            margin-bottom: 4px;
             cursor: pointer;
-            transition: all var(--transition-base);
-            position: relative;
-            overflow: hidden;
-        }
-        
-        .tool-item::before {
-            content: '';
-            position: absolute;
-            left: 0;
-            top: 0;
-            width: 3px;
-            height: 100%;
-            background: var(--accent-primary);
-            transform: scaleY(0);
-            transition: transform var(--transition-base);
-        }
-        
-        .tool-item:hover::before {
-            transform: scaleY(1);
+            transition: background-color 0.12s ease-out, border-color 0.12s ease-out;
         }
         
         .tool-item:hover {
             border-color: var(--border-hover);
             background: var(--bg-hover);
-            transform: translateX(4px);
         }
         
         .tool-name {
-            font-size: 13px;
+            font-size: 12px;
             font-weight: 500;
             color: var(--text-primary);
-            margin-bottom: 4px;
+            margin-bottom: 2px;
         }
         
         .tool-url {
-            font-size: 10px;
+            font-size: 11px;
             color: var(--text-muted);
             overflow: hidden;
             text-overflow: ellipsis;
             white-space: nowrap;
+            font-family: 'Geist Mono', monospace;
         }
         
         .add-tool-btn {
             width: 100%;
-            padding: 12px;
-            margin-top: var(--spacing-md);
-            background: var(--bg-elevated);
+            padding: 7px;
+            margin-top: 6px;
+            background: transparent;
             border: 1px dashed var(--border-color);
             color: var(--text-secondary);
             cursor: pointer;
-            transition: all var(--transition-base);
-            border-radius: 6px;
-            font-family: 'JetBrains Mono', monospace;
+            border-radius: var(--radius-sm);
+            font-family: 'Geist', sans-serif;
             font-size: 11px;
-            text-transform: uppercase;
-            letter-spacing: 1px;
+            font-weight: 500;
+            transition: border-color 0.12s ease-out, color 0.12s ease-out;
         }
         
         .add-tool-btn:hover {
-            border-color: var(--accent-primary);
-            color: var(--accent-primary);
-            background: var(--bg-hover);
+            border-color: var(--border-hover);
+            color: var(--text-primary);
         }
         
         /* ================================
@@ -456,8 +1107,8 @@
         .canvas-container {
             flex: 1;
             position: relative;
-            margin-top: 60px;
-            height: calc(100vh - 60px);
+            margin-top: 48px;
+            height: calc(100vh - 48px);
         }
         
         #network {
@@ -467,7 +1118,7 @@
         }
 
         /* ================================
-           RIGHT PANEL - NODE PROPERTIES
+           RIGHT PANEL - NODE PROPERTIES (U1, U7, U11)
            ================================ */
         .right-panel {
             width: 300px;
@@ -475,12 +1126,9 @@
             border-left: 1px solid var(--border-color);
             display: none;
             flex-direction: column;
-            margin-top: 60px;
-            height: calc(100vh - 60px);
+            margin-top: 48px;
+            height: calc(100vh - 48px);
             position: relative;
-            box-shadow: var(--shadow-lg);
-            transform: translateX(0);
-            transition: transform var(--transition-base);
             z-index: 999;
         }
 
@@ -488,83 +1136,64 @@
             display: flex;
         }
 
-        .right-panel::before {
-            content: '';
-            position: absolute;
-            top: 0;
-            left: 0;
-            width: 1px;
-            height: 100%;
-            background: linear-gradient(
-                to bottom,
-                transparent,
-                var(--accent-primary),
-                transparent
-            );
-            animation: borderGlow 3s ease-in-out infinite;
-        }
-
         .panel-header {
             display: flex;
             justify-content: space-between;
             align-items: center;
-            padding: var(--spacing-lg);
+            padding: 12px;
             border-bottom: 1px solid var(--border-color);
         }
 
         .panel-header h3 {
-            font-family: 'Orbitron', sans-serif;
-            font-size: 14px;
-            color: var(--accent-primary);
-            text-transform: uppercase;
-            letter-spacing: 1px;
+            font-size: 12px;
+            font-weight: 600;
+            color: var(--text-primary);
             margin: 0;
         }
 
         .panel-close {
             background: none;
             border: none;
-            color: var(--text-secondary);
-            font-size: 20px;
+            color: var(--text-muted);
+            font-size: 16px;
             cursor: pointer;
-            transition: all var(--transition-fast);
+            line-height: 1;
+            padding: 2px;
         }
 
         .panel-close:hover {
-            color: var(--accent-primary);
-            transform: rotate(90deg);
+            color: var(--text-primary);
         }
 
         .panel-content {
             flex: 1;
             overflow-y: auto;
-            padding: var(--spacing-lg);
+            padding: 12px;
             display: flex;
             flex-direction: column;
-            gap: var(--spacing-lg);
+            gap: 12px;
         }
 
         .property-group {
             display: flex;
             flex-direction: column;
-            gap: var(--spacing-sm);
+            gap: 4px;
         }
 
         .property-group label {
             font-size: 11px;
-            text-transform: uppercase;
-            letter-spacing: 1px;
-            color: var(--text-secondary);
             font-weight: 500;
+            color: var(--text-muted);
         }
 
         .property-value {
-            padding: 8px 12px;
+            padding: 6px 8px;
             background: var(--bg-deep);
             border: 1px solid var(--border-color);
-            border-radius: 4px;
+            border-radius: var(--radius-sm);
             color: var(--text-primary);
             font-size: 12px;
+            font-family: 'Geist Mono', monospace;
             word-break: break-all;
         }
 
@@ -579,39 +1208,36 @@
         }
 
         .property-control span {
-            min-width: 40px;
-            font-size: 12px;
+            min-width: 36px;
+            font-size: 11px;
             color: var(--text-secondary);
+            font-family: 'Geist Mono', monospace;
         }
 
         .color-picker-container {
             display: flex;
             align-items: center;
-            gap: var(--spacing-sm);
+            gap: 8px;
         }
 
         .color-picker {
-            width: 60px;
-            height: 40px;
-            border: 2px solid var(--border-color);
-            border-radius: 6px;
+            width: 36px;
+            height: 28px;
+            border: 1px solid var(--border-color);
+            border-radius: var(--radius-sm);
             cursor: pointer;
-            transition: all var(--transition-fast);
-        }
-
-        .color-picker:hover {
-            border-color: var(--accent-primary);
-            box-shadow: var(--shadow-glow);
+            background: transparent;
+            padding: 1px;
         }
 
         .color-hex {
             flex: 1;
-            font-family: 'JetBrains Mono', monospace;
-            font-size: 12px;
+            font-family: 'Geist Mono', monospace;
+            font-size: 11px;
             color: var(--text-secondary);
             background: var(--bg-deep);
-            padding: 8px 12px;
-            border-radius: 4px;
+            padding: 5px 8px;
+            border-radius: var(--radius-sm);
             border: 1px solid var(--border-color);
         }
 
@@ -619,99 +1245,168 @@
         .shape-options {
             display: grid;
             grid-template-columns: repeat(2, 1fr);
-            gap: var(--spacing-sm);
+            gap: 4px;
         }
 
         .color-btn,
         .shape-btn {
-            padding: 8px;
-            border: 2px solid var(--border-color);
-            border-radius: 6px;
+            padding: 5px;
+            border: 1px solid var(--border-color);
+            border-radius: var(--radius-sm);
             cursor: pointer;
-            transition: all var(--transition-fast);
             background: var(--bg-deep);
-            font-size: 16px;
+            color: var(--text-secondary);
+            font-size: 11px;
+            font-family: 'Geist', sans-serif;
+            transition: background-color 0.12s ease-out, border-color 0.12s ease-out;
         }
 
         .color-btn:hover,
         .shape-btn:hover {
-            border-color: var(--accent-primary);
-            box-shadow: var(--shadow-glow);
-            transform: scale(1.05);
+            border-color: var(--border-hover);
+            background: var(--bg-hover);
+            color: var(--text-primary);
         }
 
         .action-buttons {
             display: flex;
             flex-direction: column;
-            gap: var(--spacing-sm);
+            gap: 4px;
         }
 
         .action-btn {
-            padding: 10px 12px;
+            padding: 6px 8px;
             background: var(--bg-elevated);
             border: 1px solid var(--border-color);
-            border-radius: 6px;
+            border-radius: var(--radius-sm);
             color: var(--text-primary);
             cursor: pointer;
-            font-size: 12px;
-            transition: all var(--transition-base);
-            font-family: 'JetBrains Mono', monospace;
+            font-size: 11px;
+            font-family: 'Geist', sans-serif;
+            font-weight: 500;
+            transition: background-color 0.12s ease-out, border-color 0.12s ease-out;
         }
 
         .action-btn:hover {
             background: var(--bg-hover);
-            border-color: var(--accent-primary);
+            border-color: var(--border-hover);
+        }
+
+        /* Status tag buttons (U11: Clean text buttons, no emojis) */
+        .status-tags {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 4px;
+        }
+
+        .status-tag-btn {
+            padding: 5px 6px;
+            border: 1px solid var(--border-color);
+            border-radius: var(--radius-sm);
+            cursor: pointer;
+            font-size: 11px;
+            font-family: 'Geist', sans-serif;
+            font-weight: 500;
+            background: var(--bg-deep);
+            color: var(--text-secondary);
+            text-align: center;
+            transition: background-color 0.12s ease-out, border-color 0.12s ease-out;
+        }
+
+        .status-tag-btn:hover {
+            border-color: var(--border-hover);
+            background: var(--bg-hover);
+            color: var(--text-primary);
+        }
+
+        .status-tag-btn.tag-target { border-color: rgba(225, 29, 72, 0.4); color: #fda4af; }
+        .status-tag-btn.tag-target:hover { background: rgba(225, 29, 72, 0.12); }
+        .status-tag-btn.tag-suspect { border-color: rgba(217, 119, 6, 0.4); color: #fcd34d; }
+        .status-tag-btn.tag-suspect:hover { background: rgba(217, 119, 6, 0.12); }
+        .status-tag-btn.tag-verified { border-color: rgba(5, 150, 105, 0.4); color: #6ee7b7; }
+        .status-tag-btn.tag-verified:hover { background: rgba(5, 150, 105, 0.12); }
+        .status-tag-btn.tag-pending { border-color: rgba(2, 132, 199, 0.4); color: #7dd3fc; }
+        .status-tag-btn.tag-pending:hover { background: rgba(2, 132, 199, 0.12); }
+        .status-tag-btn.tag-default { border-color: var(--border-color); color: var(--text-muted); }
+        .status-tag-btn.tag-default:hover { background: var(--bg-hover); }
+
+        /* Notes textarea */
+        .node-notes-area {
+            width: 100%;
+            min-height: 72px;
+            padding: 7px 9px;
+            background: var(--bg-deep);
+            border: 1px solid var(--border-color);
+            border-radius: var(--radius-sm);
+            color: var(--text-primary);
+            font-family: 'Geist Mono', monospace;
+            font-size: 11px;
+            resize: vertical;
+            transition: border-color 0.12s ease-out;
+        }
+
+        .node-notes-area:focus {
+            outline: none;
+            border-color: var(--border-focus);
+        }
+
+        .node-notes-area::placeholder {
+            color: var(--text-muted);
+            font-family: 'Geist', sans-serif;
         }
         
+        /* Floating Toolbar (U17: Solid neutral background, no heavy glow) */
         .canvas-toolbar {
             position: absolute;
-            top: var(--spacing-lg);
-            right: var(--spacing-lg);
+            top: 10px;
+            right: 10px;
             display: flex;
-            gap: var(--spacing-sm);
+            gap: 2px;
             z-index: 100;
+            background: var(--bg-panel);
+            border: 1px solid var(--border-color);
+            border-radius: var(--radius-sm);
+            padding: 2px;
+            box-shadow: var(--shadow-sm);
         }
         
         .toolbar-btn {
-            padding: 10px 16px;
-            background: var(--bg-panel);
-            border: 1px solid var(--border-color);
-            border-radius: 6px;
-            color: var(--text-primary);
+            padding: 4px 10px;
+            background: transparent;
+            border: 1px solid transparent;
+            border-radius: var(--radius-sm);
+            color: var(--text-secondary);
             cursor: pointer;
-            transition: all var(--transition-base);
-            font-family: 'JetBrains Mono', monospace;
+            transition: background-color 0.12s ease-out, color 0.12s ease-out;
+            font-family: 'Geist', sans-serif;
             font-size: 11px;
-            text-transform: uppercase;
-            letter-spacing: 1px;
-            box-shadow: var(--shadow-md);
+            font-weight: 500;
         }
         
         .toolbar-btn:hover {
-            border-color: var(--border-hover);
+            color: var(--text-primary);
             background: var(--bg-hover);
-            transform: translateY(-2px);
-            box-shadow: var(--shadow-lg);
         }
         
         .toolbar-btn.active {
-            background: var(--accent-primary);
-            border-color: var(--accent-primary);
-            color: white;
+            background: var(--bg-elevated);
+            border-color: var(--border-color);
+            color: #ffffff;
+            font-weight: 600;
         }
         
         /* ================================
-           CONTEXT MENU
+           CONTEXT MENU (U11: Clean list without emojis)
            ================================ */
         .context-menu {
             position: fixed;
             background: var(--bg-panel);
             border: 1px solid var(--border-color);
-            border-radius: 8px;
-            padding: var(--spacing-sm);
-            box-shadow: var(--shadow-lg);
+            border-radius: var(--radius-sm);
+            padding: 3px;
+            box-shadow: var(--shadow-md);
             z-index: 10000;
-            min-width: 200px;
+            min-width: 160px;
             display: none;
         }
         
@@ -720,25 +1415,27 @@
         }
         
         .context-menu-item {
-            padding: 10px 12px;
+            position: relative;
+            padding: 5px 8px;
             cursor: pointer;
-            transition: all var(--transition-fast);
-            border-radius: 4px;
-            font-size: 12px;
+            transition: background-color 0.12s ease-out;
+            border-radius: var(--radius-sm);
+            font-size: 11px;
             display: flex;
             align-items: center;
-            gap: var(--spacing-sm);
+            justify-content: space-between;
+            color: var(--text-primary);
         }
         
         .context-menu-item:hover {
             background: var(--bg-hover);
-            color: var(--accent-primary);
+            color: #ffffff;
         }
         
         .context-menu-separator {
             height: 1px;
             background: var(--border-color);
-            margin: var(--spacing-sm) 0;
+            margin: 3px 0;
         }
         
         .submenu {
@@ -747,11 +1444,11 @@
             top: 0;
             background: var(--bg-panel);
             border: 1px solid var(--border-color);
-            border-radius: 8px;
-            padding: var(--spacing-sm);
-            box-shadow: var(--shadow-lg);
+            border-radius: var(--radius-sm);
+            padding: 3px;
+            box-shadow: var(--shadow-md);
             display: none;
-            min-width: 150px;
+            min-width: 130px;
         }
         
         .context-menu-item:hover .submenu {
@@ -767,8 +1464,8 @@
             left: 0;
             width: 100%;
             height: 100%;
-            background: rgba(0, 0, 0, 0.8);
-            backdrop-filter: blur(10px);
+            background: rgba(0, 0, 0, 0.6);
+            backdrop-filter: blur(4px);
             z-index: 9999;
             display: none;
             align-items: center;
@@ -777,100 +1474,84 @@
         
         .modal-overlay.show {
             display: flex;
-            animation: fadeIn var(--transition-base);
-        }
-        
-        @keyframes fadeIn {
-            from { opacity: 0; }
-            to { opacity: 1; }
         }
         
         .modal {
             background: var(--bg-panel);
             border: 1px solid var(--border-color);
-            border-radius: 12px;
-            padding: var(--spacing-xl);
-            max-width: 600px;
+            border-radius: var(--radius-md);
+            padding: 16px;
+            max-width: 500px;
             width: 90%;
-            max-height: 80vh;
+            max-height: 85vh;
             overflow-y: auto;
-            box-shadow: var(--shadow-lg), var(--shadow-glow);
-            animation: slideUp var(--transition-base);
-        }
-        
-        @keyframes slideUp {
-            from { transform: translateY(30px); opacity: 0; }
-            to { transform: translateY(0); opacity: 1; }
+            box-shadow: var(--shadow-lg);
         }
         
         .modal-header {
             display: flex;
             justify-content: space-between;
             align-items: center;
-            margin-bottom: var(--spacing-lg);
-            padding-bottom: var(--spacing-md);
+            margin-bottom: 12px;
+            padding-bottom: 8px;
             border-bottom: 1px solid var(--border-color);
         }
         
         .modal-title {
-            font-family: 'Orbitron', sans-serif;
-            font-size: 20px;
-            font-weight: 700;
-            color: var(--accent-primary);
+            font-family: 'Geist', sans-serif;
+            font-size: 13px;
+            font-weight: 600;
+            color: var(--text-primary);
         }
         
         .modal-close {
             background: none;
             border: none;
-            color: var(--text-secondary);
-            font-size: 24px;
+            color: var(--text-muted);
+            font-size: 18px;
             cursor: pointer;
-            transition: all var(--transition-fast);
+            line-height: 1;
         }
         
         .modal-close:hover {
-            color: var(--accent-primary);
-            transform: rotate(90deg);
+            color: var(--text-primary);
         }
         
         .form-group {
-            margin-bottom: var(--spacing-lg);
+            margin-bottom: 12px;
         }
         
         .form-label {
             display: block;
-            margin-bottom: var(--spacing-sm);
-            font-size: 12px;
-            text-transform: uppercase;
-            letter-spacing: 1px;
-            color: var(--text-secondary);
+            margin-bottom: 4px;
+            font-size: 11px;
             font-weight: 500;
+            color: var(--text-muted);
         }
         
         .form-input,
         .form-select {
             width: 100%;
-            padding: 12px 16px;
+            padding: 7px 10px;
             background: var(--bg-deep);
             border: 1px solid var(--border-color);
-            border-radius: 6px;
+            border-radius: var(--radius-sm);
             color: var(--text-primary);
-            font-family: 'JetBrains Mono', monospace;
-            font-size: 13px;
-            transition: all var(--transition-base);
+            font-family: 'Geist Mono', monospace;
+            font-size: 12px;
+            transition: border-color 0.12s ease-out;
         }
         
         .form-input:focus,
         .form-select:focus {
             outline: none;
-            border-color: var(--accent-primary);
-            box-shadow: 0 0 0 3px var(--accent-glow);
+            border-color: var(--border-focus);
         }
 
         .form-range {
             width: 100%;
-            height: 8px;
-            border-radius: 5px;
+            height: 4px;
+            border-radius: 2px;
             background: var(--border-color);
             outline: none;
         }
@@ -878,42 +1559,30 @@
         .form-range::-webkit-slider-thumb {
             -webkit-appearance: none;
             appearance: none;
-            width: 20px;
-            height: 20px;
+            width: 14px;
+            height: 14px;
             border-radius: 50%;
-            background: var(--accent-primary);
+            background: var(--text-secondary);
             cursor: pointer;
-            box-shadow: var(--shadow-glow);
-            transition: all var(--transition-fast);
-        }
-
-        .form-range::-webkit-slider-thumb:hover {
-            transform: scale(1.2);
         }
 
         .form-range::-moz-range-thumb {
-            width: 20px;
-            height: 20px;
+            width: 14px;
+            height: 14px;
             border-radius: 50%;
-            background: var(--accent-primary);
+            background: var(--text-secondary);
             cursor: pointer;
             border: none;
-            box-shadow: var(--shadow-glow);
-            transition: all var(--transition-fast);
-        }
-
-        .form-range::-moz-range-thumb:hover {
-            transform: scale(1.2);
         }
         
         .form-help {
-            margin-top: var(--spacing-xs);
+            margin-top: 4px;
             font-size: 11px;
             color: var(--text-muted);
         }
 
         /* ================================
-           DRAG AND DROP ZONE
+           DRAG AND DROP ZONE (U11, U20: No bounce, calm dashed frame)
            ================================ */
         .drop-zone {
             position: fixed;
@@ -924,7 +1593,7 @@
             display: none;
             align-items: center;
             justify-content: center;
-            background: rgba(0, 0, 0, 0.7);
+            background: rgba(9, 13, 22, 0.8);
             z-index: 9999;
             pointer-events: none;
         }
@@ -937,74 +1606,65 @@
         .drop-zone-content {
             text-align: center;
             pointer-events: none;
+            border: 1px dashed rgba(255, 255, 255, 0.25);
+            border-radius: var(--radius-md);
+            padding: 32px 48px;
+            background: rgba(13, 19, 31, 0.8);
         }
 
         .drop-zone-icon {
-            font-size: 80px;
-            margin-bottom: 20px;
-            animation: bounce 1s infinite;
-        }
-
-        @keyframes bounce {
-            0%, 100% { transform: translateY(0); }
-            50% { transform: translateY(-20px); }
+            margin-bottom: 8px;
+            color: var(--text-secondary);
         }
 
         .drop-zone-text {
-            font-family: 'Orbitron', sans-serif;
-            font-size: 24px;
-            color: var(--cyber-blue);
-            text-shadow: 0 0 20px var(--cyber-blue);
-            margin-bottom: 10px;
+            font-family: 'Geist', sans-serif;
+            font-size: 14px;
+            font-weight: 500;
+            color: var(--text-primary);
+            margin-bottom: 4px;
         }
 
         .drop-zone-subtext {
-            font-size: 14px;
-            color: var(--text-secondary);
+            font-size: 12px;
+            color: var(--text-muted);
         }
         
         .modal-actions {
             display: flex;
-            gap: var(--spacing-sm);
+            gap: 6px;
             justify-content: flex-end;
-            margin-top: var(--spacing-xl);
+            margin-top: 16px;
         }
         
         /* ================================
-           NOTIFICATION TOAST
+           NOTIFICATION TOAST (U24: Hairline border, no 4px left bar)
            ================================ */
         .toast-container {
             position: fixed;
-            bottom: var(--spacing-lg);
-            right: var(--spacing-lg);
+            bottom: 16px;
+            right: 16px;
             z-index: 10001;
             display: flex;
             flex-direction: column;
-            gap: var(--spacing-sm);
+            gap: 6px;
         }
         
         .toast {
             background: var(--bg-panel);
             border: 1px solid var(--border-color);
-            border-left: 4px solid var(--accent-primary);
-            border-radius: 6px;
-            padding: var(--spacing-md);
-            box-shadow: var(--shadow-lg);
-            min-width: 300px;
-            animation: slideInRight var(--transition-base);
-        }
-        
-        @keyframes slideInRight {
-            from { transform: translateX(400px); opacity: 0; }
-            to { transform: translateX(0); opacity: 1; }
+            border-radius: var(--radius-sm);
+            padding: 8px 12px;
+            box-shadow: var(--shadow-md);
+            min-width: 220px;
         }
         
         .toast-success {
-            border-left-color: var(--status-validated);
+            border-color: rgba(5, 150, 105, 0.4);
         }
         
         .toast-error {
-            border-left-color: var(--status-target);
+            border-color: rgba(225, 29, 72, 0.4);
         }
         
         .toast-message {
@@ -1015,33 +1675,314 @@
         /* Undo/Redo bar */
         .undo-redo-bar {
             position: fixed;
-            bottom: 16px;
+            bottom: 14px;
             left: 50%;
             transform: translateX(-50%);
             display: flex;
-            gap: 10px;
+            gap: 4px;
             z-index: 10002;
             align-items: center;
+            background: var(--bg-panel);
+            border: 1px solid var(--border-color);
+            border-radius: var(--radius-sm);
+            padding: 2px;
+            box-shadow: var(--shadow-sm);
         }
 
         .undo-redo-bar .btn {
-            padding: 8px 12px;
-            font-size: 12px;
-            text-transform: none;
+            padding: 3px 8px;
+            font-size: 11px;
         }
 
         .btn[disabled] {
-            opacity: 0.45;
+            opacity: 0.35;
             cursor: not-allowed;
         }
+
+        /* ================================
+           SEARCH OVERLAY (Ctrl+F)
+           ================================ */
+        .search-overlay {
+            position: fixed;
+            top: 60px;
+            left: 50%;
+            transform: translateX(-50%);
+            z-index: 10003;
+            display: none;
+            align-items: center;
+            gap: 6px;
+            background: var(--bg-panel);
+            border: 1px solid var(--border-focus);
+            border-radius: var(--radius-sm);
+            padding: 5px 8px;
+            box-shadow: var(--shadow-md);
+        }
+
+        .search-overlay.visible {
+            display: flex;
+        }
+
+        .search-overlay input {
+            width: 220px;
+            padding: 5px 8px;
+            background: var(--bg-deep);
+            border: 1px solid var(--border-color);
+            border-radius: var(--radius-sm);
+            color: var(--text-primary);
+            font-family: 'Geist Mono', monospace;
+            font-size: 12px;
+        }
+
+        .search-overlay input:focus {
+            outline: none;
+            border-color: var(--accent-primary);
+        }
+
+        .search-overlay .search-count {
+            font-size: 11px;
+            color: var(--text-muted);
+            min-width: 36px;
+            text-align: center;
+            font-family: 'Geist Mono', monospace;
+        }
+
+        .search-overlay .btn {
+            padding: 3px 6px;
+            font-size: 11px;
+        }
+
+        /* ================================
+           VARIABLES SECTION
+           ================================ */
+        .variables-section {
+            padding: 8px 12px;
+            border-bottom: 1px solid var(--border-color);
+        }
+
+
+        /* ================================
+           V1.4 ENHANCED UN-SLOP COMPONENTS
+           ================================ */
+        /* Sidebar Tabs */
+        .sidebar-tabs {
+            display: flex;
+            border-bottom: 1px solid var(--border-color);
+            background: var(--bg-deep);
+            padding: 3px;
+            gap: 2px;
+        }
+        .sidebar-tab {
+            flex: 1;
+            padding: 6px 4px;
+            font-family: 'Geist', sans-serif;
+            font-size: 11px;
+            font-weight: 500;
+            color: var(--text-muted);
+            background: transparent;
+            border: none;
+            border-radius: var(--radius-sm);
+            cursor: pointer;
+            transition: background-color 0.12s ease-out, color 0.12s ease-out;
+        }
+        .sidebar-tab:hover {
+            color: var(--text-primary);
+            background: var(--bg-hover);
+        }
+        .sidebar-tab.active {
+            color: var(--text-primary);
+            background: var(--bg-panel);
+            font-weight: 600;
+        }
+
+        /* Timeline */
+        .timeline-container {
+            flex: 1;
+            overflow-y: auto;
+            padding: 10px;
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+        }
+        .timeline-item {
+            display: flex;
+            flex-direction: column;
+            gap: 3px;
+            padding: 7px 9px;
+            background: var(--bg-elevated);
+            border: 1px solid var(--border-color);
+            border-radius: var(--radius-sm);
+            cursor: pointer;
+            transition: border-color 0.12s ease-out, background-color 0.12s ease-out;
+        }
+        .timeline-item:hover {
+            border-color: var(--border-hover);
+            background: var(--bg-hover);
+        }
+        .timeline-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            font-size: 10px;
+            font-family: 'Geist Mono', monospace;
+            color: var(--text-muted);
+        }
+        .timeline-action {
+            font-size: 11px;
+            font-weight: 600;
+            color: var(--text-primary);
+            word-break: break-all;
+        }
+        .timeline-detail {
+            font-size: 10px;
+            color: var(--text-secondary);
+            font-family: 'Geist Mono', monospace;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        /* Canvas Filter HUD */
+        .canvas-filter-hud {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            display: flex;
+            gap: 4px;
+            z-index: 100;
+            flex-wrap: wrap;
+            max-width: 650px;
+            pointer-events: auto;
+        }
+        .filter-chip {
+            padding: 3px 8px;
+            background: rgba(15, 17, 24, 0.88);
+            backdrop-filter: blur(8px);
+            border: 1px solid var(--border-color);
+            border-radius: var(--radius-sm);
+            font-family: 'Geist Mono', monospace;
+            font-size: 10px;
+            color: var(--text-secondary);
+            cursor: pointer;
+            transition: border-color 0.12s, color 0.12s, background-color 0.12s;
+        }
+        .filter-chip:hover {
+            color: var(--text-primary);
+            border-color: var(--border-hover);
+        }
+        .filter-chip.active {
+            background: var(--bg-elevated);
+            border-color: var(--accent-primary);
+            color: #ffffff;
+            font-weight: 600;
+        }
+
+        /* Toolbar Dropdown */
+        .toolbar-dropdown {
+            position: relative;
+            display: inline-block;
+        }
+        .toolbar-dropdown-menu {
+            position: absolute;
+            top: 100%;
+            left: 0;
+            margin-top: 4px;
+            background: var(--bg-panel);
+            border: 1px solid var(--border-color);
+            border-radius: var(--radius-sm);
+            box-shadow: var(--shadow-md);
+            min-width: 175px;
+            display: none;
+            flex-direction: column;
+            padding: 3px;
+            z-index: 1000;
+        }
+        .toolbar-dropdown-menu.show {
+            display: flex;
+        }
+        .dropdown-item {
+            padding: 5px 8px;
+            font-size: 11px;
+            color: var(--text-primary);
+            cursor: pointer;
+            border-radius: var(--radius-sm);
+            transition: background-color 0.12s;
+        }
+        .dropdown-item:hover {
+            background: var(--bg-hover);
+            color: #ffffff;
+        }
+
+        /* External Link Buttons */
+        .external-link-btn {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 5px 8px;
+            background: var(--bg-deep);
+            border: 1px solid var(--border-color);
+            border-radius: var(--radius-sm);
+            color: var(--text-secondary);
+            text-decoration: none;
+            font-size: 10px;
+            font-family: 'Geist', sans-serif;
+            transition: border-color 0.12s, background-color 0.12s, color 0.12s;
+        }
+        .external-link-btn:hover {
+            background: var(--bg-hover);
+            border-color: var(--border-hover);
+            color: var(--text-primary);
+        }
+
+        /* Command Palette */
+        .palette-section-title {
+            font-family: 'Geist Mono', monospace;
+            font-size: 9px;
+            font-weight: 600;
+            color: var(--text-muted);
+            letter-spacing: 0.05em;
+            padding: 6px 10px 3px 10px;
+        }
+        .palette-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 7px 10px;
+            border-radius: var(--radius-sm);
+            cursor: pointer;
+            transition: background-color 0.12s;
+        }
+        .palette-item:hover {
+            background: var(--bg-hover);
+        }
+        .palette-badge {
+            font-family: 'Geist Mono', monospace;
+            font-size: 9px;
+            padding: 1px 5px;
+            border-radius: 3px;
+            font-weight: 600;
+        }
+        .palette-item-text {
+            flex: 1;
+            font-size: 12px;
+            color: var(--text-primary);
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+        .palette-item-action {
+            font-family: 'Geist Mono', monospace;
+            font-size: 10px;
+            color: var(--text-muted);
+        }
+
     </style>
 </head>
 <body>
     
     <div class="drop-zone" id="dropZone">
         <div class="drop-zone-content">
-            <div class="drop-zone-icon">📁</div>
-            <div class="drop-zone-text">Drop Image or File</div>
+            <div class="drop-zone-icon"><svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 16V4m0 0l-4 4m4-4l4 4M4 14v4a2 2 0 002 2h12a2 2 0 002-2v-4"/></svg></div>
+            <div class="drop-zone-text">Drop image or file to import</div>
             <div class="drop-zone-subtext">Image will be added as node / File will create a shortcut</div>
         </div>
     </div>
@@ -1049,17 +1990,25 @@
     
     <div class="header-bar">
         <div class="logo-section">
-            <div>
-                <div class="logo">MIDINS TITAN</div>
-                <div class="logo-subtitle">OSINT Intelligence</div>
-                <div id="creditsDisplay" style="font-size:10px;color:var(--text-secondary);margin-top:2px;max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"></div>
-            </div>
+            <span class="brand-title">Midins Titan</span>
+            <span class="brand-version">v1.3</span>
+        </div>
+        <div class="stats-badge" id="statsBadge">
+            <span class="status-indicator"></span>
+            <span class="stat-item"><span class="stat-value" id="statNodes">0</span> nodes</span>
+            <span class="stat-sep">·</span>
+            <span class="stat-item"><span class="stat-value" id="statEdges">0</span> links</span>
+            <span class="stat-sep">·</span>
+            <span class="stat-item"><span class="stat-value" id="statTargets">0</span> targets</span>
         </div>
         <div class="header-actions">
-            <button class="btn" onclick="exportGraph()">💾 Export</button>
-            <button class="btn" onclick="importGraph()">📁 Import</button>
-            <button class="btn" onclick="openDashboardModal()">📂 Dashboard</button>
-            <button class="btn btn-primary" onclick="clearGraph()">🗑️ Clear</button>
+            <button class="btn" onclick="captureGraphPNG()" title="Export graph as PNG image">Export PNG</button>
+            <button class="btn" onclick="exportMarkdownReport()" title="Export investigation as Markdown report">Report</button>
+            <button class="btn" onclick="exportGraph()" title="Export investigation to JSON">Export JSON</button>
+            <button class="btn" onclick="importGraph()">Import</button>
+            <button class="btn" onclick="openDashboardModal()">Cases</button>
+            <button class="btn" onclick="openThemeModal()" title="Customize colors and themes">Theme</button>
+            <button class="btn btn-danger" onclick="clearGraph()">Clear</button>
         </div>
     </div>
 
@@ -1067,34 +2016,71 @@
         
         <div class="sidebar">
             <div class="search-section">
-                <div class="search-label">🔍 Master Search</div>
-                <input 
-                    type="text" 
-                    id="masterSearch" 
-                    class="master-search" 
-                    placeholder="URL or text to create a node..."
-                />
+                <div class="search-label" style="display:flex;justify-content:space-between;align-items:center;">
+                    <span>Entity input</span>
+                    <span style="font-size:10px;color:var(--text-muted);font-family:'Geist Mono',monospace;">↵ to add</span>
+                </div>
+                <div style="position:relative;">
+                    <input 
+                        type="text" 
+                        id="masterSearch" 
+                        class="master-search" 
+                        placeholder="URL, IP, domain, email, hash..."
+                    />
+                </div>
+                <div class="input-type-badge" id="inputTypeBadge"></div>
             </div>
             
-            <div class="variables-section" id="variablesContainer">
-                <div class="search-label">🧩 Variables</div>
+            <!-- Sidebar Tabs -->
+            <div class="sidebar-tabs">
+                <button class="sidebar-tab active" id="tabTools" onclick="switchSidebarTab('tools')">Tools</button>
+                <button class="sidebar-tab" id="tabVars" onclick="switchSidebarTab('vars')">Variables</button>
+                <button class="sidebar-tab" id="tabTimeline" onclick="switchSidebarTab('timeline')">Timeline</button>
+            </div>
+            
+            <div class="variables-section" id="variablesContainer" style="display:none;">
+                <div class="search-label">Investigation Variables</div>
                 <div id="variablesList" style="margin-bottom:8px;font-size:13px;color:var(--text-secondary)"></div>
-                <button class="add-tool-btn" onclick="openVarModal()">+ Manage Variables</button>
+                <button class="add-tool-btn" onclick="openVarModal()">Manage variables</button>
             </div>
             
-            <div class="tools-section" id="toolsContainer">
-                
+            <div class="tools-section" id="toolsContainer"></div>
+
+            <div class="timeline-container" id="timelineContainer" style="display:none;">
+                <div id="timelineList"></div>
             </div>
         </div>
 
         
         <div class="canvas-container">
+            <!-- Entity Filter HUD -->
+            <div class="canvas-filter-hud" id="canvasFilterHud">
+                <button class="filter-chip active" onclick="filterGraphByType('all')">All: 0</button>
+            </div>
+
             <div class="canvas-toolbar">
-                <button class="toolbar-btn active" id="selectMode" onclick="setMode('select')">
-                    ✋ Select
+                <button class="toolbar-btn active" id="selectMode" onclick="setMode('select')" title="Select & Inspect entities">
+                    Select
                 </button>
-                <button class="toolbar-btn" id="linkMode" onclick="setMode('link')">
-                    🔗 Link
+                <button class="toolbar-btn" id="linkMode" onclick="setMode('link')" title="Connect entities together">
+                    Connect
+                </button>
+                <div class="toolbar-dropdown">
+                    <button class="toolbar-btn" id="layoutDropdownBtn" onclick="toggleLayoutMenu()" title="Change Graph Layout Engine">
+                        Layout ▾
+                    </button>
+                    <div class="toolbar-dropdown-menu" id="layoutDropdownMenu">
+                        <div class="dropdown-item" onclick="applyLayoutMode('organic')">Organic (Physics Settle)</div>
+                        <div class="dropdown-item" onclick="applyLayoutMode('hierarchy')">Hierarchical (Top-Down)</div>
+                        <div class="dropdown-item" onclick="applyLayoutMode('horizontal')">Horizontal (Left-Right)</div>
+                        <div class="dropdown-item" onclick="applyLayoutMode('circular')">Radial (Cluster)</div>
+                    </div>
+                </div>
+                <button class="toolbar-btn" id="fitBtn" onclick="network.fit({ animation: true })" title="Fit graph to viewport (Spacebar)">
+                    Fit View
+                </button>
+                <button class="toolbar-btn" id="commandPaletteBtn" onclick="openCommandPalette()" title="Command Palette (Ctrl+K / ⌘K)">
+                    Command ⌘K
                 </button>
             </div>
             <div id="network"></div>
@@ -1103,7 +2089,7 @@
         
         <div class="right-panel" id="rightPanel">
             <div class="panel-header">
-                <h3>Node Properties</h3>
+                <h3>Entity inspector</h3>
                 <button class="panel-close" onclick="closeRightPanel()">×</button>
             </div>
             <div class="panel-content">
@@ -1111,11 +2097,27 @@
                 <div id="nodeProperties">
                     <div class="property-group">
                         <label>Name:</label>
-                        <div id="nodeName" class="property-value"></div>
+                        <div id="nodeName" class="property-value" onclick="copyNodeNameToClipboard()" title="Click to copy to clipboard" style="cursor:pointer;display:flex;justify-content:space-between;align-items:center;"></div>
                     </div>
                     <div class="property-group">
                         <label>Type:</label>
                         <div id="nodeType" class="property-value"></div>
+                    </div>
+
+                    <!-- V1.2: Status Tags -->
+                    
+                    <!-- V1.3: Automated Pivots -->
+                    <div class="property-group" id="pivotSection" style="margin-top:4px;">
+                        <label style="font-weight:600;letter-spacing:0.04em;">AUTOMATED PIVOTS:</label>
+                        <div id="inspectorPivotButtons" style="display:flex;flex-direction:column;gap:5px;">
+                            <div style="font-size:11px;color:var(--text-muted);">Select an entity to reveal pivots</div>
+                        </div>
+                    </div>
+
+                    <!-- V1.4: 1-Click External OSINT Enrichment -->
+                    <div class="property-group" id="externalLinksSection" style="margin-top:6px;display:none;">
+                        <label style="font-weight:600;letter-spacing:0.04em;">EXTERNAL ENRICHMENT:</label>
+                        <div id="externalLinksContainer" style="display:grid;grid-template-columns:repeat(2, 1fr);gap:4px;"></div>
                     </div>
 
                         <div class="property-group">
@@ -1141,15 +2143,22 @@
                     <div class="property-group">
                         <label>Shape:</label>
                         <div class="shape-options">
-                            <button class="shape-btn" onclick="changeNodeShape('circle')" title="Circle">⭕</button>
-                            <button class="shape-btn" onclick="changeNodeShape('box')" title="Box">⬜</button>
+                            <button class="shape-btn" onclick="changeNodeShape('circle')" title="Circle">Circle</button>
+                            <button class="shape-btn" onclick="changeNodeShape('box')" title="Box">Box</button>
                         </div>
                     </div>
+
+                    <!-- V1.2: Investigation Notes -->
+                    <div class="property-group">
+                        <label>Notes:</label>
+                        <textarea id="nodeNotesArea" class="node-notes-area" placeholder="Add investigation notes about this entity..." rows="4" oninput="saveNodeNotes()"></textarea>
+                    </div>
+
                     <div class="property-group">
                         <label>Actions:</label>
                         <div class="action-buttons">
-                            <button class="action-btn" onclick="renameNode()">✏️ Rename</button>
-                            <button class="action-btn" onclick="deleteNode()" style="color: var(--status-target);">🗑️ Delete</button>
+                            <button class="action-btn" onclick="renameNode()">Rename</button>
+                            <button class="action-btn" onclick="deleteNode()" style="color: var(--status-target);">Delete</button>
                         </div>
                     </div>
                 </div>
@@ -1174,8 +2183,8 @@
                     <div class="property-group">
                         <label>Actions:</label>
                         <div class="action-buttons">
-                            <button class="action-btn" onclick="applyEdgeChanges()">💾 Apply</button>
-                            <button class="action-btn" onclick="deleteEdge()" style="color: var(--status-target);">🗑️ Delete Edge</button>
+                            <button class="action-btn" onclick="applyEdgeChanges()">Save</button>
+                            <button class="action-btn" onclick="deleteEdge()" style="color: var(--status-target);">Delete Edge</button>
                         </div>
                     </div>
                     <hr />
@@ -1186,31 +2195,48 @@
 
     
     <div class="context-menu" id="contextMenu">
+        <div class="context-menu-item" id="contextPivotMenuItem" style="color:var(--accent-primary);font-weight:600;">
+            Pivot
+            <div class="submenu" id="contextPivotSubmenu">
+                <div class="context-menu-item" style="color:var(--text-muted);font-size:11px;">Select a node</div>
+            </div>
+        </div>
+        <div class="context-menu-separator"></div>
         <div class="context-menu-item" onclick="renameNode()">
-            ✏️ Rename
+            Rename
         </div>
         <div class="context-menu-item" onclick="resizeNode()">
-            📏 Resize
+            Resize
         </div>
         <div class="context-menu-item">
-            🎨 Color
+            Color
             <div class="submenu">
-                <div class="context-menu-item" onclick="changeNodeColor('#ff4757')">🔴 Target</div>
-                <div class="context-menu-item" onclick="changeNodeColor('#1dd1a1')">🟢 Validated</div>
-                <div class="context-menu-item" onclick="changeNodeColor('#5f27cd')">🔵 Info</div>
-                <div class="context-menu-item" onclick="changeNodeColor('#a371f7')">🟣 Default</div>
+                <div class="context-menu-item" onclick="changeNodeColor('#ff4757')">Target</div>
+                <div class="context-menu-item" onclick="changeNodeColor('#1dd1a1')">Confirmed</div>
+                <div class="context-menu-item" onclick="changeNodeColor('#5f27cd')">Info</div>
+                <div class="context-menu-item" onclick="changeNodeColor('#a371f7')">Default</div>
             </div>
         </div>
         <div class="context-menu-item">
-            📐 Shape
+            Shape
             <div class="submenu">
-                <div class="context-menu-item" onclick="changeNodeShape('circle')">⭕ Circle</div>
-                <div class="context-menu-item" onclick="changeNodeShape('box')">⬜ Box</div>
+                <div class="context-menu-item" onclick="changeNodeShape('circle')">Circle</div>
+                <div class="context-menu-item" onclick="changeNodeShape('box')">Box</div>
+            </div>
+        </div>
+        <div class="context-menu-item">
+            Status
+            <div class="submenu">
+                <div class="context-menu-item" onclick="setNodeStatus('target', '#ff4757')">Target</div>
+                <div class="context-menu-item" onclick="setNodeStatus('suspect', '#ffa502')">Suspect</div>
+                <div class="context-menu-item" onclick="setNodeStatus('verified', '#1dd1a1')">Confirmed</div>
+                <div class="context-menu-item" onclick="setNodeStatus('pending', '#54a0ff')">To verify</div>
+                <div class="context-menu-item" onclick="setNodeStatus('default', '#a371f7')">Default</div>
             </div>
         </div>
         <div class="context-menu-separator"></div>
         <div class="context-menu-item" onclick="deleteNode()" style="color: var(--status-target);">
-            🗑️ Delete
+            Delete
         </div>
     </div>
 
@@ -1310,12 +2336,47 @@
     </div>
 
     
+    
+    <!-- Theme Engine Modal -->
+    <div class="modal-overlay" id="themeModal">
+        <div class="modal" style="max-width: 460px;">
+            <div class="modal-header">
+                <h2 class="modal-title">Color Harmony & Themes</h2>
+                <button class="modal-close" onclick="closeThemeModal()">×</button>
+            </div>
+            <div class="form-group">
+                <label class="form-label">Theme Presets</label>
+                <div class="theme-presets-grid" id="themePresetsList"></div>
+            </div>
+            <div class="form-group" style="margin-top:14px;padding-top:12px;border-top:1px solid var(--border-color);">
+                <label class="form-label">Custom Accent Color</label>
+                <div style="display:flex;gap:10px;align-items:center;">
+                    <input type="color" id="customAccentPicker" class="color-picker" onchange="applyCustomAccent(this.value)">
+                    <span id="customAccentHex" class="color-hex" style="font-family:'Geist Mono',monospace;">#3b82f6</span>
+                    <button type="button" class="btn btn-sm" onclick="resetDefaultTheme()">Reset to default</button>
+                </div>
+            </div>
+            <div class="modal-actions">
+                <button type="button" class="btn btn-primary" onclick="closeThemeModal()">Done</button>
+            </div>
+        </div>
+    </div>
+
     <div class="toast-container" id="toastContainer"></div>
 
     
     <div class="undo-redo-bar" id="undoRedoBar" aria-hidden="false">
-        <button class="btn" id="undoBtn" onclick="undo()" title="Undo (Ctrl+Z)">↶ Undo</button>
-        <button class="btn" id="redoBtn" onclick="redo()" title="Redo (Ctrl+Y / Ctrl+Shift+Z)">↷ Redo</button>
+        <button class="btn" id="undoBtn" onclick="undo()" title="Undo (Ctrl+Z)">Undo</button>
+        <button class="btn" id="redoBtn" onclick="redo()" title="Redo (Ctrl+Y / Ctrl+Shift+Z)">Redo</button>
+    </div>
+
+    <!-- V1.2: Search Overlay -->
+    <div class="search-overlay" id="searchOverlay">
+        <input type="text" id="searchInput" placeholder="Search nodes..." oninput="onSearchInput()" onkeydown="onSearchKeydown(event)">
+        <span class="search-count" id="searchCount"></span>
+        <button class="btn" onclick="searchPrev()">Previous</button>
+        <button class="btn" onclick="searchNext()">Next</button>
+        <button class="btn" onclick="toggleSearchOverlay()">✕</button>
     </div>
 
     
@@ -1330,24 +2391,19 @@
         let selectedNode = null;
         let selectedEdge = null;
     
-    
-    
-    
-    
-    
-    
-    
-    let editingTool = null;
+        let editingTool = null;
         let linkSourceNode = null;
         let nodeIdCounter = 1;
         let edgeIdCounter = 1;
         
         
-        
-        
         let historyStates = [];
         let historyIndex = -1;
         const maxHistory = 100;
+
+        // V1.2: Search state
+        let searchResults = [];
+        let searchResultIndex = -1;
         
         
         const defaultTools = {
@@ -1392,8 +2448,373 @@
             loadCredits();
             setupKeyboardShortcuts();
             loadHistoryFromStorage();
-            showToast('MIDINS TITAN initialized successfully', 'success');
+            updateStats();
+            showToast('MIDINS TITAN V1.3 initialized', 'success');
         });
+
+        // ================================
+        // V1.2: SMART INPUT PARSER
+        // ================================
+        const INPUT_PATTERNS = {
+            url: /^(https?:\/\/)?([a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}(\/[^\s]*)?$/,
+            email: /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/,
+            ip: /^(\d{1,3}\.){3}\d{1,3}$/,
+            phone: /^[\+]?[(]?[0-9]{1,4}[)]?[-\s\./0-9]{6,15}$/,
+            hash: /^[a-fA-F0-9]{32,128}$/
+        };
+
+        const INPUT_TYPE_LABELS = {
+            url: 'URL',
+            email: 'Email',
+            ip: 'IP Address',
+            phone: 'Phone Number',
+            hash: 'Hash',
+            text: 'Text'
+        };
+
+        const INPUT_TYPE_COLORS = {
+            url: { bg: '#0c1424', border: '#38bdf8' },
+            email: { bg: '#1c0f24', border: '#ec4899' },
+            ip: { bg: '#1a1408', border: '#f59e0b' },
+            phone: { bg: '#062016', border: '#34d399' },
+            hash: { bg: '#220a14', border: '#f43f5e' },
+            location: { bg: '#06241a', border: '#10b981' },
+            asn: { bg: '#160e2b', border: '#a855f7' },
+            text: { bg: '#0f121a', border: '#64748b' }
+        };
+
+        const INPUT_TYPE_SHAPES = {
+            url: 'box',
+            email: 'box',
+            ip: 'box',
+            phone: 'box',
+            hash: 'box',
+            text: 'box'
+        };
+
+        function detectInputType(input) {
+            const trimmed = input.trim();
+            if (!trimmed) return null;
+            if (INPUT_PATTERNS.email.test(trimmed)) return 'email';
+            if (INPUT_PATTERNS.ip.test(trimmed)) return 'ip';
+            if (INPUT_PATTERNS.hash.test(trimmed)) return 'hash';
+            if (INPUT_PATTERNS.phone.test(trimmed)) return 'phone';
+            if (INPUT_PATTERNS.url.test(trimmed)) return 'url';
+            return 'text';
+        }
+
+        function updateInputTypeBadge(value) {
+            const badge = document.getElementById('inputTypeBadge');
+            if (!badge) return;
+            const type = detectInputType(value);
+            if (!type || !value.trim()) {
+                badge.className = 'input-type-badge';
+                badge.textContent = '';
+                return;
+            }
+            badge.className = `input-type-badge visible type-${type}`;
+            badge.textContent = INPUT_TYPE_LABELS[type] || type;
+        }
+
+        // ================================
+        // V1.2: STATS COUNTER
+        // ================================
+        function updateStats() {
+            const nodeCount = nodes ? nodes.length : 0;
+            const edgeCount = edges ? edges.length : 0;
+            let targetCount = 0;
+            if (nodes) {
+                nodes.forEach(n => {
+                    if (n.status === 'target') targetCount++;
+                });
+            }
+            const statNodes = document.getElementById('statNodes');
+            const statEdges = document.getElementById('statEdges');
+            const statTargets = document.getElementById('statTargets');
+            if (statNodes) statNodes.textContent = nodeCount;
+            if (statEdges) statEdges.textContent = edgeCount;
+            if (statTargets) statTargets.textContent = targetCount;
+            if (typeof updateFilterHud === "function") updateFilterHud();
+        }
+
+        // ================================
+        // V1.2: SEARCH / FOCUS (Ctrl+F)
+        // ================================
+        function toggleSearchOverlay() {
+            const overlay = document.getElementById('searchOverlay');
+            if (overlay.classList.contains('visible')) {
+                overlay.classList.remove('visible');
+                clearSearchHighlight();
+            } else {
+                overlay.classList.add('visible');
+                document.getElementById('searchInput').value = '';
+                document.getElementById('searchCount').textContent = '';
+                searchResults = [];
+                searchResultIndex = -1;
+                setTimeout(() => document.getElementById('searchInput').focus(), 50);
+            }
+        }
+
+        function onSearchInput() {
+            const query = document.getElementById('searchInput').value.trim().toLowerCase();
+            searchResults = [];
+            searchResultIndex = -1;
+
+            if (!query) {
+                document.getElementById('searchCount').textContent = '';
+                clearSearchHighlight();
+                return;
+            }
+
+            const allNodes = nodes.get();
+            for (const n of allNodes) {
+                const label = (n.label || '').toLowerCase();
+                const notes = (n.notes || '').toLowerCase();
+                const url = (n.url || '').toLowerCase();
+                if (label.includes(query) || notes.includes(query) || url.includes(query)) {
+                    searchResults.push(n.id);
+                }
+            }
+
+            document.getElementById('searchCount').textContent = searchResults.length > 0 ? `${searchResults.length} found` : 'No results';
+
+            if (searchResults.length > 0) {
+                searchResultIndex = 0;
+                focusSearchResult();
+            }
+        }
+
+        function searchNext() {
+            if (searchResults.length === 0) return;
+            searchResultIndex = (searchResultIndex + 1) % searchResults.length;
+            focusSearchResult();
+        }
+
+        function searchPrev() {
+            if (searchResults.length === 0) return;
+            searchResultIndex = (searchResultIndex - 1 + searchResults.length) % searchResults.length;
+            focusSearchResult();
+        }
+
+        function focusSearchResult() {
+            if (searchResultIndex < 0 || searchResultIndex >= searchResults.length) return;
+            const nodeId = searchResults[searchResultIndex];
+            network.focus(nodeId, { scale: 1.2, animation: { duration: 400, easingFunction: 'easeInOutQuad' } });
+            network.selectNodes([nodeId]);
+            document.getElementById('searchCount').textContent = `${searchResultIndex + 1} / ${searchResults.length}`;
+        }
+
+        function clearSearchHighlight() {
+            if (network) {
+                network.unselectAll();
+            }
+        }
+
+        function onSearchKeydown(e) {
+            if (e.key === 'Escape') {
+                toggleSearchOverlay();
+            } else if (e.key === 'Enter') {
+                if (e.shiftKey) searchPrev();
+                else searchNext();
+            }
+        }
+
+        // ================================
+        // V1.2: STATUS TAGS
+        // ================================
+        function setNodeStatus(status, color) {
+            if (!selectedNode) return;
+            hideContextMenu();
+
+            const node = nodes.get(selectedNode);
+            if (!node) return;
+
+            // Build label prefix
+            const statusIcons = {
+                target: '🎯',
+                suspect: '⚠️',
+                verified: '✅',
+                pending: '🔍',
+                default: ''
+            };
+
+            // Remove any existing status emoji prefix from label
+            let cleanLabel = (node.label || '').replace(/^(🎯|⚠️|✅|🔍)\s*/, '');
+            const icon = statusIcons[status] || '';
+            const newLabel = icon ? `${icon} ${cleanLabel}` : cleanLabel;
+
+            nodes.update({
+                id: selectedNode,
+                label: newLabel,
+                status: status,
+                color: {
+                    background: color + '22',
+                    border: color
+                }
+            });
+            saveGraph();
+            pushHistory();
+            if (typeof logInvestigationEvent === "function") logInvestigationEvent("Added Entity", label, `Type: ${type || "text"}`);
+            updateStats();
+            showToast(`Status set: ${status}`, 'success');
+            if (document.getElementById('rightPanel').classList.contains('active')) {
+                showRightPanel();
+            }
+        }
+
+        // ================================
+        // V1.2: NODE NOTES
+        // ================================
+        function saveNodeNotes() {
+            if (!selectedNode) return;
+            const notes = document.getElementById('nodeNotesArea').value;
+            nodes.update({
+                id: selectedNode,
+                notes: notes
+            });
+            saveGraph();
+        }
+
+        // ================================
+        // V1.2: AUTO-LAYOUT
+        // ================================
+        function autoLayout() {
+            if (!network) return;
+            showToast('Reorganizing layout...', 'success');
+
+            // Temporarily enable physics for a nice auto-layout
+            network.setOptions({
+                physics: {
+                    enabled: true,
+                    stabilization: { iterations: 200 },
+                    barnesHut: {
+                        gravitationalConstant: -3000,
+                        centralGravity: 0.3,
+                        springConstant: 0.02,
+                        springLength: 150,
+                        damping: 0.3
+                    }
+                }
+            });
+
+            // After stabilization, freeze again
+            network.once('stabilizationIterationsDone', function() {
+                network.setOptions({ physics: { enabled: false } });
+                saveGraph();
+                pushHistory();
+                showToast('Layout reorganized', 'success');
+            });
+
+            // Safety timeout in case stabilization doesn't fire
+            setTimeout(() => {
+                network.setOptions({ physics: { enabled: false } });
+            }, 3000);
+        }
+
+        // ================================
+        // V1.2: EXPORT PNG
+        // ================================
+        function captureGraphPNG() {
+            if (!network) return;
+            try {
+                const canvas = network.canvas.frame.canvas;
+                const dataURL = canvas.toDataURL('image/png');
+                const link = document.createElement('a');
+                link.href = dataURL;
+                link.download = `midins_graph_${Date.now()}.png`;
+                link.click();
+                showToast('Graph exported as PNG', 'success');
+            } catch (e) {
+                console.error('PNG export error:', e);
+                showToast('Failed to export PNG', 'error');
+            }
+        }
+
+        // ================================
+        // V1.2: EXPORT MARKDOWN REPORT
+        // ================================
+        function exportMarkdownReport() {
+            const allNodes = nodes.get();
+            const allEdges = edges.get();
+
+            if (allNodes.length === 0) {
+                showToast('No nodes to export', 'error');
+                return;
+            }
+
+            let md = `# Midins Titan — Investigation Report\n\n`;
+            md += `**Generated:** ${new Date().toLocaleString()}  \n`;
+            md += `**Nodes:** ${allNodes.length} | **Links:** ${allEdges.length}  \n\n`;
+            md += `---\n\n`;
+
+            // Group nodes by status
+            const statusGroups = {};
+            for (const n of allNodes) {
+                const status = n.status || 'default';
+                if (!statusGroups[status]) statusGroups[status] = [];
+                statusGroups[status].push(n);
+            }
+
+            const statusLabels = {
+                target: 'Targets',
+                suspect: 'Suspects',
+                verified: 'Confirmed',
+                pending: 'To Verify',
+                default: 'Other Entities'
+            };
+
+            for (const [status, label] of Object.entries(statusLabels)) {
+                const group = statusGroups[status];
+                if (!group || group.length === 0) continue;
+                md += `## ${label}\n\n`;
+                for (const n of group) {
+                    const cleanLabel = (n.label || 'Unnamed').replace(/^(🎯|⚠️|✅|🔍)\s*/, '');
+                    md += `### ${cleanLabel}\n\n`;
+                    if (n.url) md += `- **URL:** ${n.url}\n`;
+                    
+                    // Find input type
+                    const inputType = detectInputType(n.url || n.label || '');
+                    if (inputType && inputType !== 'text') {
+                        md += `- **Type:** ${inputType.toUpperCase()}\n`;
+                    }
+
+                    // Relations
+                    const outEdges = allEdges.filter(e => e.from === n.id);
+                    const inEdges = allEdges.filter(e => e.to === n.id);
+                    if (outEdges.length > 0) {
+                        md += `- **Links to:**\n`;
+                        for (const e of outEdges) {
+                            const target = allNodes.find(x => x.id === e.to);
+                            const targetLabel = target ? (target.label || 'Unnamed').replace(/^(🎯|⚠️|✅|🔍)\s*/, '') : `Node ${e.to}`;
+                            md += `  - → ${targetLabel}${e.title ? ` _(${e.title})_` : ''}\n`;
+                        }
+                    }
+                    if (inEdges.length > 0) {
+                        md += `- **Linked from:**\n`;
+                        for (const e of inEdges) {
+                            const source = allNodes.find(x => x.id === e.from);
+                            const sourceLabel = source ? (source.label || 'Unnamed').replace(/^(🎯|⚠️|✅|🔍)\s*/, '') : `Node ${e.from}`;
+                            md += `  - ← ${sourceLabel}${e.title ? ` _(${e.title})_` : ''}\n`;
+                        }
+                    }
+
+                    if (n.notes) {
+                        md += `- **Notes:**\n\n`;
+                        md += `  > ${n.notes.replace(/\n/g, '\n  > ')}\n`;
+                    }
+                    md += `\n`;
+                }
+            }
+
+            md += `---\n\n_Report generated by MIDINS TITAN V1.3_\n`;
+
+            const blob = new Blob([md], { type: 'text/markdown' });
+            const link = document.createElement('a');
+            link.href = URL.createObjectURL(blob);
+            link.download = `midins_report_${Date.now()}.md`;
+            link.click();
+            showToast('Markdown report exported', 'success');
+        }
 
         
         function loadHistoryFromStorage() {
@@ -1454,6 +2875,7 @@
             historyIndex = historyStates.length - 1;
             saveHistoryToStorage();
             updateUndoRedoButtons();
+            updateStats();
         }
 
         function applyHistoryState(snapshot) {
@@ -1480,6 +2902,7 @@
             saveGraph();
             
             updateUndoRedoButtons();
+            updateStats();
         }
 
         function undo() {
@@ -1525,6 +2948,10 @@
                     } else if (key === 'y') {
                         e.preventDefault();
                         redo();
+                    } else if (key === 'f' || key === 'k') {
+                        // Ctrl+F / ⌘K command palette
+                        e.preventDefault();
+                        openCommandPalette();
                     }
                 }
             });
@@ -1687,6 +3114,11 @@
             if (master) {
                 master.title = 'Type and press Enter to create a node; leave blank to use a selected item';
                 try { master.focus(); } catch (e) {}
+
+                // V1.2: Smart input type detection on typing
+                master.addEventListener('input', function() {
+                    updateInputTypeBadge(this.value);
+                });
             }
 
             // add titles/tooltips for main controls
@@ -1727,9 +3159,9 @@
 
             // onboarding hint (shown only once)
             try {
-                if (!localStorage.getItem('midins_onboard_shown')) {
-                    showToast('Tip: Double-click a node to copy its text. Click a node to open the right panel for properties. Drag images/files onto the canvas to add nodes. Press Delete to remove selection.', 'success');
-                    localStorage.setItem('midins_onboard_shown', '1');
+                if (!localStorage.getItem('midins_onboard_v13_shown')) {
+                    showToast('MIDINS TITAN V1.3: Automated Pivots, Timeline Audit & Command Palette Active', 'info');
+                    localStorage.setItem('midins_onboard_v13_shown', '1');
                 }
             } catch (e) {}
         }
@@ -1868,10 +3300,22 @@
             if (!title) title = `Case ${new Date().toLocaleString()}`;
             const cases = getCases();
             const id = Date.now();
+
+            // Save positions along with nodes
+            const positions = (network && typeof network.getPositions === 'function') ? network.getPositions() : {};
+            const snapshotNodes = nodes.get().map(n => {
+                const copy = Object.assign({}, n);
+                if (positions && positions[copy.id]) {
+                    copy.x = positions[copy.id].x;
+                    copy.y = positions[copy.id].y;
+                }
+                return copy;
+            });
+
             const payload = {
                 id,
                 title,
-                nodes: nodes.get(),
+                nodes: snapshotNodes,
                 edges: edges.get(),
                 nodeIdCounter,
                 edgeIdCounter,
@@ -1901,7 +3345,9 @@
 
                 const left = document.createElement('div');
                 left.style.flex = '1';
-                left.innerHTML = `<div style="font-weight:600">${c.title}</div><div style="font-size:11px;color:var(--text-secondary)">Modified: ${new Date(c.lastModified).toLocaleString()}</div>`;
+                const nodeCount = c.nodes ? c.nodes.length : 0;
+                const edgeCount = c.edges ? c.edges.length : 0;
+                left.innerHTML = `<div style="font-weight:600">${c.title}</div><div style="font-size:11px;color:var(--text-secondary)">Modified: ${new Date(c.lastModified).toLocaleString()} · ${nodeCount} nodes · ${edgeCount} links</div>`;
 
                 const actions = document.createElement('div');
                 actions.style.display = 'flex';
@@ -2061,25 +3507,21 @@
                         maximum: 200
                     },
                     font: {
-                        color: '#e8eaed',
-                        size: 14,
-                        face: 'JetBrains Mono'
+                        color: '#f8fafc',
+                        size: 13,
+                        face: 'Geist Mono'
                     },
                     color: {
-                        background: '#1c2028',
-                        border: '#a371f7',
+                        background: '#0f172a',
+                        border: '#475569',
                         highlight: {
-                            background: '#232932',
-                            border: '#00d9ff'
+                            background: '#1e293b',
+                            border: '#38bdf8'
                         }
                     },
-                    borderWidth: 2,
+                    borderWidth: 1.5,
                     shadow: {
-                        enabled: true,
-                        color: 'rgba(0, 0, 0, 0.5)',
-                        size: 10,
-                        x: 0,
-                        y: 2
+                        enabled: false
                     }
                 },
                 edges: {
@@ -2090,11 +3532,11 @@
                         }
                     },
                     color: {
-                        color: '#a371f7',
-                        highlight: '#00d9ff',
-                        hover: '#00d9ff'
+                        color: '#334155',
+                        highlight: '#38bdf8',
+                        hover: '#60a5fa'
                     },
-                    width: 2,
+                    width: 1.5,
                     smooth: {
                         type: 'cubicBezier',
                         forceDirection: 'none'
@@ -2132,6 +3574,7 @@
             network.on('click', handleNetworkClick);
             
             network.on('doubleClick', handleNodeDoubleClick);
+        network.on('oncontext', handleNetworkRightClick);
             
             container.addEventListener('contextmenu', function(e) {
                 e.preventDefault();
@@ -2141,6 +3584,18 @@
                 const nodeIds = network.getNodesAtEvent(e);
                 if (nodeIds.length === 0) {
                     closeRightPanel();
+                }
+            });
+
+            // V1.2: Update stats when nodes/edges change
+            nodes.on('*', updateStats);
+            edges.on('*', updateStats);
+
+            // V1.2: Save graph when nodes are dragged
+            network.on('dragEnd', function(params) {
+                if (params.nodes.length > 0) {
+                    saveGraph();
+                    pushHistory();
                 }
             });
             
@@ -2199,9 +3654,12 @@
             const headerTitle = document.querySelector('#rightPanel .panel-header h3');
             if (headerTitle) headerTitle.textContent = `Node Properties — ${node.label || 'Unnamed'}`;
             
-            // Determine node type
+            // Determine node type (V1.2: use smart parser)
             let nodeType = 'Text Node';
-            if (node.url) nodeType = 'URL Node';
+            if (node.url) {
+                const detected = detectInputType(node.url);
+                nodeType = detected ? `${INPUT_TYPE_LABELS[detected] || 'URL Node'}` : 'URL Node';
+            }
             if (node.image) nodeType = 'Image Node';
             document.getElementById('nodeType').textContent = nodeType;
 
@@ -2212,8 +3670,13 @@
 
             // Update color picker
             const nodeColor = node.color?.background || '#a371f7';
-            document.getElementById('nodeColorPicker').value = nodeColor;
-            document.getElementById('colorHex').textContent = nodeColor.toUpperCase();
+            document.getElementById('nodeColorPicker').value = nodeColor.replace(/[^#a-fA-F0-9]/g, '') || '#a371f7';
+            document.getElementById('colorHex').textContent = (nodeColor || '#a371f7').toUpperCase();
+
+            // V1.2: Update notes
+            document.getElementById('nodeNotesArea').value = node.notes || '';
+            updatePivotOptionsForNode(selectedNode);
+            if (typeof updateExternalLinksForNode === "function") updateExternalLinksForNode(node);
 
             // Hide edge properties and show node properties
             document.getElementById('edgeProperties').style.display = 'none';
@@ -2305,10 +3768,12 @@
             document.getElementById('rightPanel').classList.add('active');
 
             // update header to clarify which edge is selected
-            const fromLabel = edge.from;
-            const toLabel = edge.to;
+            const fromNode = nodes.get(edge.from);
+            const toNode = nodes.get(edge.to);
+            const fromLabel = fromNode ? (fromNode.label || edge.from) : edge.from;
+            const toLabel = toNode ? (toNode.label || edge.to) : edge.to;
             const headerTitle = document.querySelector('#rightPanel .panel-header h3');
-            if (headerTitle) headerTitle.textContent = `Edge Properties — ${fromLabel} → ${toLabel}`;
+            if (headerTitle) headerTitle.textContent = `Edge: ${fromLabel} → ${toLabel}`;
             const varSel = document.getElementById('variableSelector');
             if (varSel && varSel.value) {
                 const vars = getVariables();
@@ -2341,6 +3806,7 @@
             });
             saveGraph();
             pushHistory();
+            if (typeof logInvestigationEvent === "function") logInvestigationEvent("Added Entity", label, `Type: ${type || "text"}`);
         }
 
         function applyEdgeChanges() {
@@ -2355,6 +3821,7 @@
             });
             saveGraph();
             pushHistory();
+            if (typeof logInvestigationEvent === "function") logInvestigationEvent("Added Entity", label, `Type: ${type || "text"}`);
             showToast('Edge updated', 'success');
             showEdgePanel();
         }
@@ -2365,6 +3832,7 @@
             edges.remove(selectedEdge);
             saveGraph();
             pushHistory();
+            if (typeof logInvestigationEvent === "function") logInvestigationEvent("Added Entity", label, `Type: ${type || "text"}`);
             showToast('Edge deleted', 'success');
             closeEdgePanel();
         }
@@ -2391,11 +3859,22 @@
             }
         }
 
-        function handleNetworkRightClick(params) {
+                function handleNetworkRightClick(params) {
             params.event.preventDefault();
             
-            if (params.nodes.length > 0) {
-                selectedNode = params.nodes[0];
+            // Get the node clicked at DOM pointer position
+            let nodeId = undefined;
+            if (params.nodes && params.nodes.length > 0) {
+                nodeId = params.nodes[0];
+            } else if (params.pointer && params.pointer.DOM) {
+                nodeId = network.getNodeAt(params.pointer.DOM);
+            }
+            
+            if (nodeId !== undefined) {
+                selectedNode = nodeId;
+                network.selectNodes([nodeId]);
+                showRightPanel();
+                updatePivotOptionsForNode(nodeId);
                 showContextMenu(params.event.clientX, params.event.clientY);
             } else {
                 hideContextMenu();
@@ -2413,6 +3892,7 @@
             document.getElementById('contextMenu').classList.remove('show');
         }
 
+        document.addEventListener('click', function(e) { if (!e.target.closest('.toolbar-dropdown')) { const m = document.getElementById('layoutDropdownMenu'); if (m) m.classList.remove('show'); } });
         // Close context menu when clicking elsewhere
         document.addEventListener('click', function(e) {
             if (!e.target.closest('.context-menu')) {
@@ -2451,6 +3931,7 @@
             
             saveGraph();
             pushHistory();
+            if (typeof logInvestigationEvent === "function") logInvestigationEvent("Added Entity", label, `Type: ${type || "text"}`);
             showToast('Color changed', 'success');
         }
 
@@ -2470,6 +3951,7 @@
             
             saveGraph();
             pushHistory();
+            if (typeof logInvestigationEvent === "function") logInvestigationEvent("Added Entity", label, `Type: ${type || "text"}`);
         }
 
         function changeNodeShape(shape) {
@@ -2482,6 +3964,7 @@
             
             saveGraph();
             pushHistory();
+            if (typeof logInvestigationEvent === "function") logInvestigationEvent("Added Entity", label, `Type: ${type || "text"}`);
             showToast('Shape changed', 'success');
         }
 
@@ -2518,6 +4001,7 @@
             
             saveGraph();
             pushHistory();
+            if (typeof logInvestigationEvent === "function") logInvestigationEvent("Added Entity", label, `Type: ${type || "text"}`);
             showToast('Node resized', 'success');
             closeResizeModal();
         }
@@ -2559,29 +4043,65 @@
         // ================================
         function setupEventListeners() {
             const masterSearch = document.getElementById('masterSearch');
-            
-            masterSearch.addEventListener('keypress', function(e) {
-                if (e.key === 'Enter') {
-                    const value = this.value.trim();
-                    if (value) {
-                        createNodeFromInput(value);
-                        this.value = '';
+            if (masterSearch) {
+                masterSearch.addEventListener('keydown', function(e) {
+                    if (e.key === 'Enter') {
+                        e.preventDefault();
+                        const value = this.value.trim();
+                        if (value) {
+                            createNodeFromInput(value);
+                            this.value = '';
+                            updateInputTypeBadge('');
+                        }
                     }
-                }
-            });
+                });
+            }
         }
 
         async function createNodeFromInput(input) {
-            // Detect if it's a URL
-            const urlPattern = /^(https?:\/\/)?([\da-z\.-]+)\.([a-z\.]{2,6})([\/\w \.-]*)*\/?$/;
+            // V1.2: Use smart input parser
+            const inputType = detectInputType(input);
             
-            if (urlPattern.test(input)) {
-                // It's a URL, fetch metadata
+            if (inputType === 'url') {
                 await createUrlNode(input);
             } else {
-                // Plain text
-                createTextNode(input);
+                // Create typed node with appropriate color
+                createTypedNode(input, inputType);
             }
+        }
+
+        // V1.2: Create typed node with colors and metadata
+        function createTypedNode(text, type) {
+            const colors = INPUT_TYPE_COLORS[type] || INPUT_TYPE_COLORS.text;
+            const typeLabels = {
+                email: '',
+                ip: '',
+                phone: '',
+                hash: '',
+                text: ''
+            };
+            const prefix = typeLabels[type] || '';
+            const label = prefix ? `${prefix} ${text}` : text;
+
+            const pos = findFreePosition();
+            const nodeObj = {
+                id: nodeIdCounter++,
+                label: label,
+                title: text,
+                inputType: type,
+                shape: 'box',
+                color: {
+                    background: colors.bg,
+                    border: colors.border
+                }
+            };
+            if (pos) { nodeObj.x = pos.x; nodeObj.y = pos.y; }
+            nodes.add(nodeObj);
+            
+            saveGraph();
+            pushHistory();
+            if (typeof logInvestigationEvent === "function") logInvestigationEvent("Added Entity", label, `Type: ${type || "text"}`);
+            showToast(`${type.charAt(0).toUpperCase() + type.slice(1)} node created`, 'success');
         }
 
         async function createUrlNode(url) {
@@ -2613,10 +4133,11 @@
                     label: data.title || url,
                     title: `${data.title || 'URL'}\n${url}${data.description ? '\n\n' + data.description : ''}`,
                     url: url,
+                    inputType: 'url',
                     shape: 'box',
                     color: {
                         background: '#1c2028',
-                        border: '#a371f7'
+                        border: '#00d9ff'
                     }
                 };
                 if (pos) { nodeData.x = pos.x; nodeData.y = pos.y; }
@@ -2635,17 +4156,21 @@
             } catch (error) {
                 console.error('Error creating URL node:', error);
                 // Create a fallback node
-                nodes.add({
+                const pos = findFreePosition();
+                const fallbackNode = {
                     id: nodeIdCounter++,
                     label: new URL(url).hostname,
                     title: url,
                     url: url,
+                    inputType: 'url',
                     shape: 'box',
                     color: {
                         background: '#1c2028',
                         border: '#ff4757'
                     }
-                });
+                };
+                if (pos) { fallbackNode.x = pos.x; fallbackNode.y = pos.y; }
+                nodes.add(fallbackNode);
                 saveGraph();
                 pushHistory();
                 showToast('Node created (fallback mode)', 'error');
@@ -2669,6 +4194,7 @@
             
             saveGraph();
             pushHistory();
+            if (typeof logInvestigationEvent === "function") logInvestigationEvent("Added Entity", label, `Type: ${type || "text"}`);
             showToast('Text node created', 'success');
         }
 
@@ -2676,8 +4202,19 @@
         // PERSISTENCE
         // ================================
         function saveGraph() {
+            // V1.2: Save positions along with graph data
+            const positions = (network && typeof network.getPositions === 'function') ? network.getPositions() : {};
+            const snapshotNodes = nodes.get().map(n => {
+                const copy = Object.assign({}, n);
+                if (positions && positions[copy.id]) {
+                    copy.x = positions[copy.id].x;
+                    copy.y = positions[copy.id].y;
+                }
+                return copy;
+            });
+
             const graphData = {
-                nodes: nodes.get(),
+                nodes: snapshotNodes,
                 edges: edges.get(),
                 nodeIdCounter,
                 edgeIdCounter
@@ -2705,13 +4242,23 @@
         }
 
         function exportGraph() {
+            const positions = (network && typeof network.getPositions === 'function') ? network.getPositions() : {};
+            const snapshotNodes = nodes.get().map(n => {
+                const copy = Object.assign({}, n);
+                if (positions && positions[copy.id]) {
+                    copy.x = positions[copy.id].x;
+                    copy.y = positions[copy.id].y;
+                }
+                return copy;
+            });
+
             const graphData = {
-                nodes: nodes.get(),
+                nodes: snapshotNodes,
                 edges: edges.get(),
                 nodeIdCounter,
                 edgeIdCounter,
                 exportDate: new Date().toISOString(),
-                version: '1.0.0'
+                version: '1.3.0'
             };
             
             const dataStr = JSON.stringify(graphData, null, 2);
@@ -2757,6 +4304,8 @@
             };
             
             reader.readAsText(file);
+            // Reset file input so re-importing the same file works
+            event.target.value = '';
         }
 
         function clearGraph() {
@@ -2972,6 +4521,996 @@
                 return null;
             }
         }
-    </script>
+    
+// ==========================================
+// THEME ENGINE FOR MIDINS TITAN
+// ==========================================
+const THEME_PRESETS = {
+    'slate': {
+        name: 'Slate Obsidian',
+        desc: 'Linear & Raycast dark default',
+        colors: {
+            '--bg-deep': '#090d16',
+            '--bg-panel': '#0d131f',
+            '--bg-elevated': '#131b2c',
+            '--bg-hover': '#182238',
+            '--bg-active': '#1f2b47',
+            '--accent-primary': '#3b82f6',
+            '--accent-hover': '#2563eb',
+            '--border-focus': '#3b82f6'
+        },
+        accent: '#3b82f6',
+        bg: '#090d16'
+    },
+    'cyber': {
+        name: 'Cyber Midnight',
+        desc: 'Deep navy & electric cyan',
+        colors: {
+            '--bg-deep': '#050914',
+            '--bg-panel': '#091024',
+            '--bg-elevated': '#0f1b3d',
+            '--bg-hover': '#162754',
+            '--bg-active': '#1d326b',
+            '--accent-primary': '#00e5ff',
+            '--accent-hover': '#00b4d8',
+            '--border-focus': '#00e5ff'
+        },
+        accent: '#00e5ff',
+        bg: '#050914'
+    },
+    'emerald': {
+        name: 'Matrix Emerald',
+        desc: 'Tactical terminal green',
+        colors: {
+            '--bg-deep': '#070d0a',
+            '--bg-panel': '#0c1712',
+            '--bg-elevated': '#13241c',
+            '--bg-hover': '#1a3328',
+            '--bg-active': '#224234',
+            '--accent-primary': '#10b981',
+            '--accent-hover': '#059669',
+            '--border-focus': '#10b981'
+        },
+        accent: '#10b981',
+        bg: '#070d0a'
+    },
+    'tokyo': {
+        name: 'Tokyo Violet',
+        desc: 'Deep obsidian & neon purple',
+        colors: {
+            '--bg-deep': '#0c0a17',
+            '--bg-panel': '#120f24',
+            '--bg-elevated': '#1a1633',
+            '--bg-hover': '#231e45',
+            '--bg-active': '#2d2657',
+            '--accent-primary': '#a855f7',
+            '--accent-hover': '#9333ea',
+            '--border-focus': '#a855f7'
+        },
+        accent: '#a855f7',
+        bg: '#0c0a17'
+    },
+    'amber': {
+        name: 'Tactical Amber',
+        desc: 'Industrial carbon & warm gold',
+        colors: {
+            '--bg-deep': '#0e0c0a',
+            '--bg-panel': '#17130f',
+            '--bg-elevated': '#241e17',
+            '--bg-hover': '#30281f',
+            '--bg-active': '#3d3328',
+            '--accent-primary': '#f59e0b',
+            '--accent-hover': '#d97706',
+            '--border-focus': '#f59e0b'
+        },
+        accent: '#f59e0b',
+        bg: '#0e0c0a'
+    },
+    'mono': {
+        name: 'OLED Monochrome',
+        desc: 'Pure black & stark silver',
+        colors: {
+            '--bg-deep': '#000000',
+            '--bg-panel': '#0a0a0a',
+            '--bg-elevated': '#141414',
+            '--bg-hover': '#1e1e1e',
+            '--bg-active': '#282828',
+            '--accent-primary': '#f8fafc',
+            '--accent-hover': '#e2e8f0',
+            '--border-focus': '#ffffff'
+        },
+        accent: '#f8fafc',
+        bg: '#000000'
+    }
+};
+
+function setTheme(themeKey) {
+    const preset = THEME_PRESETS[themeKey];
+    if (!preset) return;
+    const root = document.documentElement;
+    for (const [prop, val] of Object.entries(preset.colors)) {
+        root.style.setProperty(prop, val);
+    }
+    localStorage.setItem('titan_theme', themeKey);
+    localStorage.removeItem('titan_custom_accent');
+    
+    // Update active state in modal
+    document.querySelectorAll('.theme-card').forEach(el => {
+        el.classList.toggle('active', el.dataset.theme === themeKey);
+    });
+
+    // Sync custom picker value
+    const picker = document.getElementById('customAccentPicker');
+    const hex = document.getElementById('customAccentHex');
+    if (picker) picker.value = preset.accent;
+    if (hex) hex.textContent = preset.accent;
+
+    // Sync network options
+    if (typeof network !== 'undefined' && network) {
+        network.setOptions({
+            nodes: {
+                color: {
+                    highlight: { border: preset.accent }
+                }
+            },
+            edges: {
+                color: { highlight: preset.accent, hover: preset.accent }
+            }
+        });
+    }
+}
+
+function applyCustomAccent(hexColor) {
+    const root = document.documentElement;
+    root.style.setProperty('--accent-primary', hexColor);
+    root.style.setProperty('--accent-hover', hexColor);
+    root.style.setProperty('--border-focus', hexColor);
+    localStorage.setItem('titan_custom_accent', hexColor);
+    
+    const hex = document.getElementById('customAccentHex');
+    if (hex) hex.textContent = hexColor;
+
+    document.querySelectorAll('.theme-card').forEach(el => el.classList.remove('active'));
+
+    if (typeof network !== 'undefined' && network) {
+        network.setOptions({
+            nodes: {
+                color: {
+                    highlight: { border: hexColor }
+                }
+            },
+            edges: {
+                color: { highlight: hexColor, hover: hexColor }
+            }
+        });
+    }
+}
+
+function openThemeModal() {
+    renderThemeModal();
+    const modal = document.getElementById('themeModal');
+    if (modal) modal.classList.add('show');
+}
+
+function closeThemeModal() {
+    const modal = document.getElementById('themeModal');
+    if (modal) modal.classList.remove('show');
+}
+
+function resetDefaultTheme() {
+    setTheme('slate');
+}
+
+function renderThemeModal() {
+    const container = document.getElementById('themePresetsList');
+    if (!container) return;
+    const activeTheme = localStorage.getItem('titan_theme') || 'slate';
+    const customAccent = localStorage.getItem('titan_custom_accent');
+    
+    container.innerHTML = Object.entries(THEME_PRESETS).map(([key, t]) => `
+        <div class="theme-card ${activeTheme === key && !customAccent ? 'active' : ''}" data-theme="${key}" onclick="setTheme('${key}')">
+            <div class="theme-preview" style="background:${t.bg}">
+                <span class="theme-dot" style="background:${t.accent}"></span>
+            </div>
+            <div class="theme-info">
+                <div class="theme-name">${t.name}</div>
+                <div class="theme-desc">${t.desc}</div>
+            </div>
+        </div>
+    `).join('');
+
+    const picker = document.getElementById('customAccentPicker');
+    const hex = document.getElementById('customAccentHex');
+    const currentAccent = customAccent || THEME_PRESETS[activeTheme]?.accent || '#3b82f6';
+    if (picker) picker.value = currentAccent;
+    if (hex) hex.textContent = currentAccent;
+}
+
+// Load saved theme on boot
+window.addEventListener('DOMContentLoaded', () => {
+    const savedTheme = localStorage.getItem('titan_theme') || 'slate';
+    const customAccent = localStorage.getItem('titan_custom_accent');
+    if (customAccent) {
+        setTheme(savedTheme);
+        applyCustomAccent(customAccent);
+    } else {
+        setTheme(savedTheme);
+    }
+});
+
+
+
+// ==========================================
+// DYNAMIC MULTI-PIVOT ENGINE
+// ==========================================
+// ==========================================
+// DYNAMIC MULTI-PIVOT ENGINE (100% ENGLISH, PRIVACY-FIRST)
+// ==========================================
+function updatePivotOptionsForNode(nodeId) {
+    if (!nodeId) return;
+    const node = nodes.get(nodeId);
+    if (!node) return;
+    
+    let raw = (node.url || node.title || node.label || '').trim();
+    raw = raw.replace(/^(Target|Suspect|Confirmed|To verify|Default)\s*/i, '').trim();
+    if (raw.includes('://')) {
+        try {
+            raw = new URL(raw).hostname;
+        } catch(e) {
+            raw = raw.split('://')[1].split('/')[0].split(':')[0];
+        }
+    } else {
+        raw = raw.split('/')[0].split(':')[0].trim();
+    }
+    
+    // Check entity types
+    const isIpv4 = /^(\d{1,3}\.){3}\d{1,3}$/.test(raw);
+    const isIpv6 = /^([0-9a-fA-F]{0,4}:){2,7}[0-9a-fA-F]{0,4}$/.test(raw);
+    const isIp = isIpv4 || isIpv6;
+    const isEmail = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/.test(raw);
+    const isHash = /^[a-fA-F0-9]{32,128}$/.test(raw);
+    const isDomain = !isIp && !isEmail && !isHash && raw.includes('.') && !raw.includes(' ') && raw.length > 3;
+    
+    const submenu = document.getElementById('contextPivotSubmenu');
+    const inspectorDiv = document.getElementById('inspectorPivotButtons');
+    
+    let pivots = [];
+    if (isIp) {
+        pivots = [
+            { id: 'geo', label: 'Location (GeoIP)', desc: 'City, region & country coordinates' },
+            { id: 'asn', label: 'Operator & ASN', desc: 'Autonomous System & network operator' },
+            { id: 'ptr', label: 'Reverse DNS (PTR)', desc: 'Resolve hostname associated with this IP' },
+            { id: 'whois', label: 'Netblock & Org', desc: 'IP routing prefix and organization' }
+        ];
+    } else if (isDomain) {
+        pivots = [
+            { id: 'dns', label: 'IPv4 Addresses (A)', desc: 'Resolve forward IPv4 records' },
+            { id: 'dns_aaaa', label: 'IPv6 Addresses (AAAA)', desc: 'Resolve forward IPv6 records' },
+            { id: 'mx', label: 'Mail Servers (MX)', desc: 'Discover mail exchange servers' },
+            { id: 'ns', label: 'Name Servers (NS)', desc: 'Identify authoritative DNS servers' },
+            { id: 'txt', label: 'Security & SPF (TXT)', desc: 'Query verification tags & SPF records' },
+            { id: 'subdomains', label: 'Subdomain Discovery', desc: 'Enumerate common service subdomains' }
+        ];
+    } else if (isEmail) {
+        pivots = [
+            { id: 'email_domain', label: 'Extract Root Domain', desc: 'Isolate root domain from email address' },
+            { id: 'email_mx', label: 'Mail Servers (MX)', desc: 'Discover destination mail servers for domain' }
+        ];
+    } else if (isHash) {
+        pivots = [
+            { id: 'hash_type', label: 'Identify Algorithm', desc: 'Determine hash standard & bit length' }
+        ];
+    }
+    
+    if (submenu) {
+        if (pivots.length > 0) {
+            let subHtml = '';
+            if (pivots.length > 1) {
+                subHtml += `
+                    <div class="context-menu-item" onclick="executeAllPivots()" style="color:var(--accent-primary);font-weight:600;border-bottom:1px solid var(--border-color);margin-bottom:2px;">
+                        <span>Run All Pivots (${pivots.length})</span>
+                        <span style="font-family:'Geist Mono',monospace;font-size:9px;">⚡</span>
+                    </div>
+                `;
+            }
+            subHtml += pivots.map(p => `
+                <div class="context-menu-item" onclick="executePivot('${p.id}')" title="${p.desc}">
+                    <span style="font-weight:500;">${p.label}</span>
+                    <span style="font-family:'Geist Mono',monospace;font-size:9px;color:var(--text-muted);margin-left:8px;">→</span>
+                </div>
+            `).join('');
+            submenu.innerHTML = subHtml;
+        } else {
+            submenu.innerHTML = `
+                <div class="context-menu-item" style="color:var(--text-muted);font-size:11px;cursor:default;">
+                    No pivots for this entity
+                </div>
+            `;
+        }
+    }
+    
+    if (inspectorDiv) {
+        if (pivots.length > 0) {
+            let inspHtml = '';
+            if (pivots.length > 1) {
+                inspHtml += `
+                    <button type="button" class="pivot-card-btn" onclick="executeAllPivots()" style="border-color:rgba(59, 130, 246, 0.4);background:rgba(59, 130, 246, 0.08);margin-bottom:6px;">
+                        <div class="pivot-info">
+                            <span class="pivot-title" style="color:var(--accent-primary);">Run All Pivots (${pivots.length})</span>
+                            <span class="pivot-desc">Execute all applicable pivots in parallel</span>
+                        </div>
+                        <span class="pivot-badge" style="background:var(--accent-primary);color:#ffffff;">ALL →</span>
+                    </button>
+                `;
+            }
+            inspHtml += pivots.map(p => `
+                <button type="button" class="pivot-card-btn" onclick="executePivot('${p.id}')" title="${p.desc}">
+                    <div class="pivot-info">
+                        <span class="pivot-title">${p.label}</span>
+                        <span class="pivot-desc">${p.desc}</span>
+                    </div>
+                    <span class="pivot-badge">RUN →</span>
+                </button>
+            `).join('');
+            inspectorDiv.innerHTML = inspHtml;
+        } else {
+            inspectorDiv.innerHTML = `
+                <div style="font-size:11px;color:var(--text-muted);padding:8px 0;">
+                    No automated pivots available for this entity type.
+                </div>
+            `;
+        }
+    }
+}
+
+async function executePivot(pivotType) {
+    // Hide context menu if open
+    hideContextMenu();
+    
+    const targetNodeId = selectedNode || (network ? network.getSelectedNodes()[0] : null);
+    if (!targetNodeId) {
+        showToast('Please select a node first', 'error');
+        return;
+    }
+    
+    const parentNode = nodes.get(targetNodeId);
+    if (!parentNode) return;
+    
+    let rawTarget = (parentNode.url || parentNode.title || parentNode.label || '').trim();
+    rawTarget = rawTarget.replace(/^(Target|Suspect|Confirmed|To verify|Default)\s*/i, '').trim();
+    if (rawTarget.includes('://')) {
+        try {
+            rawTarget = new URL(rawTarget).hostname;
+        } catch(e) {
+            rawTarget = rawTarget.split('://')[1].split('/')[0].split(':')[0];
+        }
+    } else {
+        rawTarget = rawTarget.split('/')[0].split(':')[0].trim();
+    }
+    
+    if (!rawTarget) {
+        showToast('Target entity is empty', 'error');
+        return;
+    }
+    
+    showToast(`Running pivot on ${rawTarget}...`, 'info');
+    
+    try {
+        const response = await fetch('/api/pivot', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ target: rawTarget, pivot_type: pivotType })
+        });
+        
+        const data = await response.json();
+        
+        if (!response.ok || data.error) {
+            showToast(data.error || 'Pivot execution failed', 'error');
+            return;
+        }
+        
+        const results = data.results || [];
+        if (results.length === 0) {
+            showToast('No records found for this pivot', 'info');
+            return;
+        }
+        
+        // Radial positioning around parent node
+        const parentPos = network.getPosition(targetNodeId) || { x: 0, y: 0 };
+        const radius = 170;
+        let addedCount = 0;
+        
+        results.forEach((res, index) => {
+            const angle = (2 * Math.PI / Math.max(results.length, 1)) * index + (Math.PI / 4);
+            const posX = parentPos.x + radius * Math.cos(angle);
+            const posY = parentPos.y + radius * Math.sin(angle);
+            
+            // Check if node with identical label already exists
+            const existing = nodes.get({
+                filter: function (item) {
+                    return item.label === res.value || item.title === res.value;
+                }
+            });
+            
+            let childId;
+            if (existing && existing.length > 0) {
+                childId = existing[0].id;
+            } else {
+                childId = nodeIdCounter++;
+                const colors = INPUT_TYPE_COLORS[res.type] || INPUT_TYPE_COLORS.text;
+                nodes.add({
+                    id: childId,
+                    label: res.value,
+                    title: res.value,
+                    inputType: res.type,
+                    shape: 'box',
+                    x: posX,
+                    y: posY,
+                    color: {
+                        background: colors.bg,
+                        border: colors.border
+                    }
+                });
+                addedCount++;
+            }
+            
+            // Link parent to child if not already linked
+            const existingEdge = edges.get({
+                filter: function (edge) {
+                    return (edge.from === targetNodeId && edge.to === childId) ||
+                           (edge.from === childId && edge.to === targetNodeId);
+                }
+            });
+            
+            if (!existingEdge || existingEdge.length === 0) {
+                edges.add({
+                    id: `edge_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`,
+                    from: targetNodeId,
+                    to: childId,
+                    label: res.relation,
+                    arrows: { to: { enabled: true, scaleFactor: 0.55 } },
+                    font: { size: 10, align: 'middle', color: '#94a3b8', background: 'rgba(15, 18, 26, 0.85)' },
+                    color: {
+                        color: 'rgba(255, 255, 255, 0.2)',
+                        highlight: 'var(--accent-primary)',
+                        hover: 'var(--accent-primary)'
+                    }
+                });
+            }
+        });
+        
+        // Fluid Maltego-style physics settling
+        network.setOptions({ physics: { enabled: true, stabilization: false } });
+        setTimeout(() => {
+            network.setOptions({ physics: { enabled: false } });
+        }, 600);
+        
+        saveGraph();
+        pushHistory();
+        updateStats();
+        
+        showToast(`Pivot successful: ${results.length} entities connected`, 'success');
+        
+    } catch (err) {
+        console.error('Pivot error:', err);
+        showToast('Server connection error', 'error');
+    }
+}
+
+
+// ==========================================
+// V1.4 COMPREHENSIVE INTELLIGENCE EXTENSIONS
+// ==========================================
+
+function escapeHtml(str) {
+    if (!str) return '';
+    return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#039;');
+}
+
+// 1. EXECUTE ALL PIVOTS (DEEP SCAN)
+async function executeAllPivots() {
+    hideContextMenu();
+    
+    const targetNodeId = selectedNode || (network ? network.getSelectedNodes()[0] : null);
+    if (!targetNodeId) {
+        showToast('Please select a node first', 'error');
+        return;
+    }
+    
+    const parentNode = nodes.get(targetNodeId);
+    if (!parentNode) return;
+    
+    let rawTarget = (parentNode.url || parentNode.title || parentNode.label || '').trim();
+    rawTarget = rawTarget.replace(/^(Target|Suspect|Confirmed|To verify|Default)\s*/i, '').trim();
+    if (rawTarget.includes('://')) {
+        try { rawTarget = new URL(rawTarget).hostname; } catch(e) { rawTarget = rawTarget.split('://')[1].split('/')[0].split(':')[0]; }
+    } else {
+        rawTarget = rawTarget.split('/')[0].split(':')[0].trim();
+    }
+    
+    const isIpv4 = /^(\d{1,3}\.){3}\d{1,3}$/.test(rawTarget);
+    const isIpv6 = /^([0-9a-fA-F]{0,4}:){2,7}[0-9a-fA-F]{0,4}$/.test(rawTarget);
+    const isIp = isIpv4 || isIpv6;
+    const isEmail = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/.test(rawTarget);
+    const isHash = /^[a-fA-F0-9]{32,128}$/.test(rawTarget);
+    const isDomain = !isIp && !isEmail && !isHash && rawTarget.includes('.') && !rawTarget.includes(' ') && rawTarget.length > 3;
+    
+    let pivotTypes = [];
+    if (isIp) {
+        pivotTypes = ['geo', 'asn', 'ptr', 'whois'];
+    } else if (isDomain) {
+        pivotTypes = ['dns', 'dns_aaaa', 'mx', 'ns', 'txt', 'subdomains'];
+    } else if (isEmail) {
+        pivotTypes = ['email_domain', 'email_mx'];
+    } else if (isHash) {
+        pivotTypes = ['hash_type'];
+    }
+    
+    if (pivotTypes.length === 0) {
+        showToast('No automated pivots available for this entity', 'info');
+        return;
+    }
+    
+    showToast(`Deep Scan: running ${pivotTypes.length} pivots on ${rawTarget}...`, 'info');
+    
+    try {
+        const promises = pivotTypes.map(pt => 
+            fetch('/api/pivot', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ target: rawTarget, pivot_type: pt })
+            }).then(r => r.json())
+        );
+        
+        const responses = await Promise.allSettled(promises);
+        let allResults = [];
+        responses.forEach(res => {
+            if (res.status === 'fulfilled' && res.value && res.value.results) {
+                allResults = allResults.concat(res.value.results);
+            }
+        });
+        
+        if (allResults.length === 0) {
+            showToast('No new records discovered across all pivots', 'info');
+            return;
+        }
+        
+        const parentPos = network.getPosition(targetNodeId) || { x: 0, y: 0 };
+        const radius = Math.max(180, allResults.length * 20);
+        let addedCount = 0;
+        
+        allResults.forEach((res, index) => {
+            const angle = (2 * Math.PI / Math.max(allResults.length, 1)) * index + (Math.PI / 4);
+            const posX = parentPos.x + radius * Math.cos(angle);
+            const posY = parentPos.y + radius * Math.sin(angle);
+            
+            const existing = nodes.get({
+                filter: function (item) {
+                    return item.label === res.value || item.title === res.value;
+                }
+            });
+            
+            let childId;
+            if (existing && existing.length > 0) {
+                childId = existing[0].id;
+            } else {
+                childId = nodeIdCounter++;
+                const colors = INPUT_TYPE_COLORS[res.type] || INPUT_TYPE_COLORS.text;
+                nodes.add({
+                    id: childId,
+                    label: res.value,
+                    title: res.value,
+                    inputType: res.type,
+                    shape: 'box',
+                    x: posX,
+                    y: posY,
+                    color: {
+                        background: colors.bg,
+                        border: colors.border
+                    }
+                });
+                addedCount++;
+            }
+            
+            const existingEdge = edges.get({
+                filter: function (edge) {
+                    return (edge.from === targetNodeId && edge.to === childId) ||
+                           (edge.from === childId && edge.to === targetNodeId);
+                }
+            });
+            
+            if (!existingEdge || existingEdge.length === 0) {
+                edges.add({
+                    id: `edge_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`,
+                    from: targetNodeId,
+                    to: childId,
+                    label: res.relation,
+                    arrows: { to: { enabled: true, scaleFactor: 0.55 } },
+                    font: { size: 10, align: 'middle', color: '#94a3b8', background: 'rgba(15, 18, 26, 0.85)' },
+                    color: {
+                        color: 'rgba(255, 255, 255, 0.2)',
+                        highlight: 'var(--accent-primary)',
+                        hover: 'var(--accent-primary)'
+                    }
+                });
+            }
+        });
+        
+        network.setOptions({ physics: { enabled: true, stabilization: false } });
+        setTimeout(() => {
+            network.setOptions({ physics: { enabled: false } });
+        }, 800);
+        
+        saveGraph();
+        pushHistory();
+        updateStats();
+        logInvestigationEvent('Deep Scan (All Pivots)', rawTarget, `Discovered ${allResults.length} entities`);
+        
+        showToast(`Deep Scan complete: ${allResults.length} entities connected!`, 'success');
+        
+    } catch (err) {
+        console.error('All pivots error:', err);
+        showToast('Server error executing batch pivots', 'error');
+    }
+}
+
+// 2. INVESTIGATION TIMELINE & AUDIT LOG
+let investigationTimeline = [];
+
+function logInvestigationEvent(action, target, details) {
+    const time = new Date().toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    investigationTimeline.unshift({ time, action, target, details });
+    if (investigationTimeline.length > 50) investigationTimeline.pop();
+    renderInvestigationTimeline();
+}
+
+function renderInvestigationTimeline() {
+    const list = document.getElementById('timelineList');
+    if (!list) return;
+    if (investigationTimeline.length === 0) {
+        list.innerHTML = '<div style="font-size:11px;color:var(--text-muted);padding:8px 0;">No investigation events logged yet.</div>';
+        return;
+    }
+    list.innerHTML = investigationTimeline.map(ev => `
+        <div class="timeline-item" onclick="focusNodeByLabel('${escapeHtml(ev.target)}')">
+            <div class="timeline-header">
+                <span style="font-weight:600;color:var(--accent-primary);">${escapeHtml(ev.action)}</span>
+                <span>${ev.time}</span>
+            </div>
+            <div class="timeline-action">${escapeHtml(ev.target)}</div>
+            ${ev.details ? `<div class="timeline-detail">${escapeHtml(ev.details)}</div>` : ''}
+        </div>
+    `).join('');
+}
+
+function focusNodeByLabel(label) {
+    if (!nodes || !network) return;
+    const match = nodes.get({
+        filter: n => n.label === label || n.title === label || (n.url && n.url.includes(label))
+    });
+    if (match && match.length > 0) {
+        selectAndFocusNode(match[0].id);
+    }
+}
+
+function switchSidebarTab(tabName) {
+    document.querySelectorAll('.sidebar-tab').forEach(b => b.classList.remove('active'));
+    const tabBtn = document.getElementById('tab' + tabName.charAt(0).toUpperCase() + tabName.slice(1));
+    if (tabBtn) tabBtn.classList.add('active');
+    
+    document.getElementById('toolsContainer').style.display = tabName === 'tools' ? 'block' : 'none';
+    document.getElementById('variablesContainer').style.display = tabName === 'vars' ? 'block' : 'none';
+    document.getElementById('timelineContainer').style.display = tabName === 'timeline' ? 'flex' : 'none';
+    
+    if (tabName === 'timeline') {
+        renderInvestigationTimeline();
+    }
+}
+
+// 3. CANVAS FILTER HUD BAR
+let activeFilterType = 'all';
+
+function updateFilterHud() {
+    const hud = document.getElementById('canvasFilterHud');
+    if (!hud || !nodes) return;
+    const all = nodes.get();
+    if (all.length === 0) {
+        hud.innerHTML = '<button class="filter-chip active" onclick="filterGraphByType(\'all\')">All: 0</button>';
+        return;
+    }
+    
+    const counts = {};
+    all.forEach(n => {
+        const t = n.inputType || 'text';
+        counts[t] = (counts[t] || 0) + 1;
+    });
+    
+    let html = `<button class="filter-chip ${activeFilterType === 'all' ? 'active' : ''}" onclick="filterGraphByType('all')">All: ${all.length}</button>`;
+    for (const [t, count] of Object.entries(counts)) {
+        const label = INPUT_TYPE_LABELS[t] || t.toUpperCase();
+        html += `<button class="filter-chip ${activeFilterType === t ? 'active' : ''}" onclick="filterGraphByType('${t}')">${label}: ${count}</button>`;
+    }
+    hud.innerHTML = html;
+}
+
+function filterGraphByType(type) {
+    activeFilterType = type;
+    updateFilterHud();
+    if (!nodes) return;
+    
+    if (type === 'all') {
+        nodes.forEach(n => {
+            nodes.update({ id: n.id, opacity: 1 });
+        });
+        showToast('Showing all entities', 'info');
+    } else {
+        nodes.forEach(n => {
+            const matches = (n.inputType || 'text') === type;
+            nodes.update({ id: n.id, opacity: matches ? 1 : 0.12 });
+        });
+        showToast(`Filter applied: ${INPUT_TYPE_LABELS[type] || type}`, 'info');
+    }
+}
+
+// 4. GRAPH LAYOUT ENGINES
+function toggleLayoutMenu() {
+    const menu = document.getElementById('layoutDropdownMenu');
+    if (menu) menu.classList.toggle('show');
+}
+
+function applyLayoutMode(mode) {
+    if (!network) return;
+    const menu = document.getElementById('layoutDropdownMenu');
+    if (menu) menu.classList.remove('show');
+    
+    if (mode === 'organic') {
+        showToast('Applying Organic Physics layout...', 'info');
+        network.setOptions({
+            layout: { hierarchical: { enabled: false } },
+            physics: {
+                enabled: true,
+                solver: 'forceAtlas2Based',
+                forceAtlas2Based: {
+                    gravitationalConstant: -60,
+                    centralGravity: 0.015,
+                    springLength: 120,
+                    springConstant: 0.08,
+                    damping: 0.4
+                }
+            }
+        });
+        setTimeout(() => {
+            network.setOptions({ physics: { enabled: false } });
+            network.fit({ animation: true });
+        }, 1200);
+    } else if (mode === 'hierarchy') {
+        showToast('Applying Hierarchical (Top-Down) layout...', 'info');
+        network.setOptions({
+            layout: {
+                hierarchical: {
+                    enabled: true,
+                    direction: 'UD',
+                    sortMethod: 'directed',
+                    nodeSpacing: 180,
+                    levelSeparation: 130
+                }
+            },
+            physics: { enabled: false }
+        });
+        setTimeout(() => network.fit({ animation: true }), 300);
+    } else if (mode === 'horizontal') {
+        showToast('Applying Horizontal (Left-Right) layout...', 'info');
+        network.setOptions({
+            layout: {
+                hierarchical: {
+                    enabled: true,
+                    direction: 'LR',
+                    sortMethod: 'directed',
+                    nodeSpacing: 160,
+                    levelSeparation: 160
+                }
+            },
+            physics: { enabled: false }
+        });
+        setTimeout(() => network.fit({ animation: true }), 300);
+    } else if (mode === 'circular') {
+        showToast('Applying Radial Cluster layout...', 'info');
+        network.setOptions({
+            layout: {
+                hierarchical: {
+                    enabled: true,
+                    direction: 'LR',
+                    sortMethod: 'hubsize',
+                    nodeSpacing: 160,
+                    levelSeparation: 140
+                }
+            },
+            physics: { enabled: false }
+        });
+        setTimeout(() => network.fit({ animation: true }), 300);
+    }
+}
+
+// 5. EXTERNAL ENRICHMENT SHORTCUTS
+function updateExternalLinksForNode(node) {
+    const container = document.getElementById('externalLinksContainer');
+    const sec = document.getElementById('externalLinksSection');
+    if (!container || !node) return;
+    
+    let raw = (node.url || node.title || node.label || '').trim();
+    raw = raw.replace(/^(Target|Suspect|Confirmed|To verify|Default)\s*/i, '').trim();
+    if (raw.includes('://')) {
+        try { raw = new URL(raw).hostname; } catch(e) { raw = raw.split('://')[1].split('/')[0].split(':')[0]; }
+    } else {
+        raw = raw.split('/')[0].split(':')[0].trim();
+    }
+    
+    const isIp = /^(\d{1,3}\.){3}\d{1,3}$/.test(raw) || /^([0-9a-fA-F]{0,4}:){2,7}[0-9a-fA-F]{0,4}$/.test(raw);
+    const isEmail = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/.test(raw);
+    const isHash = /^[a-fA-F0-9]{32,128}$/.test(raw);
+    const isDomain = !isIp && !isEmail && !isHash && raw.includes('.') && !raw.includes(' ');
+    
+    let links = [];
+    if (isIp) {
+        links = [
+            { name: 'VirusTotal', url: `https://www.virustotal.com/gui/ip-address/${raw}` },
+            { name: 'Shodan', url: `https://www.shodan.io/host/${raw}` },
+            { name: 'AbuseIPDB', url: `https://www.abuseipdb.com/check/${raw}` },
+            { name: 'BGPView', url: `https://bgpview.io/ip/${raw}` }
+        ];
+    } else if (isDomain) {
+        links = [
+            { name: 'VirusTotal', url: `https://www.virustotal.com/gui/domain/${raw}` },
+            { name: 'urlscan.io', url: `https://urlscan.io/domain/${raw}` },
+            { name: 'Wayback', url: `https://web.archive.org/web/*/${raw}` },
+            { name: 'crt.sh', url: `https://crt.sh/?q=${raw}` }
+        ];
+    } else if (isEmail) {
+        links = [
+            { name: 'Hunter.io', url: `https://hunter.io/verify/${raw}` },
+            { name: 'HIBP', url: `https://haveibeenpwned.com/` }
+        ];
+    } else if (isHash) {
+        links = [
+            { name: 'VirusTotal', url: `https://www.virustotal.com/gui/file/${raw}` },
+            { name: 'MalwareBazaar', url: `https://bazaar.abuse.ch/sample/${raw}` }
+        ];
+    }
+    
+    if (links.length > 0) {
+        if (sec) sec.style.display = 'block';
+        container.innerHTML = links.map(l => `
+            <a href="${l.url}" target="_blank" rel="noopener noreferrer" class="external-link-btn" title="Open ${l.name}">
+                <span>${l.name}</span>
+                <span style="font-size:10px;opacity:0.7;">↗</span>
+            </a>
+        `).join('');
+    } else {
+        if (sec) sec.style.display = 'none';
+        container.innerHTML = '';
+    }
+}
+
+// 6. CLICK-TO-COPY
+function copyNodeNameToClipboard() {
+    const el = document.getElementById('nodeName');
+    if (!el || !el.textContent) return;
+    const val = el.textContent.trim();
+    navigator.clipboard.writeText(val).then(() => {
+        showToast(`Copied to clipboard: ${val}`, 'success');
+    }).catch(() => {
+        showToast('Failed to copy', 'error');
+    });
+}
+
+// 7. COMMAND PALETTE (⌘K / Ctrl+K)
+function openCommandPalette() {
+    const modal = document.getElementById('commandPaletteModal');
+    if (!modal) return;
+    modal.classList.add('show');
+    const input = document.getElementById('commandPaletteInput');
+    if (input) {
+        input.value = '';
+        setTimeout(() => input.focus(), 60);
+        renderCommandPaletteResults('');
+    }
+}
+
+function closeCommandPalette() {
+    const modal = document.getElementById('commandPaletteModal');
+    if (modal) modal.classList.remove('show');
+}
+
+function renderCommandPaletteResults(query) {
+    const container = document.getElementById('commandPaletteResults');
+    if (!container) return;
+    const q = query.trim().toLowerCase();
+    
+    let html = '';
+    
+    // Matched nodes
+    const all = nodes ? nodes.get() : [];
+    const matchedNodes = q ? all.filter(n => (n.label || '').toLowerCase().includes(q) || (n.inputType || '').toLowerCase().includes(q)) : all.slice(0, 6);
+    
+    if (matchedNodes.length > 0) {
+        html += `<div class="palette-section-title">GRAPH ENTITIES (${matchedNodes.length})</div>`;
+        html += matchedNodes.map(n => `
+            <div class="palette-item" onclick="selectAndFocusNode(${n.id}); closeCommandPalette();">
+                <span class="palette-badge" style="background:rgba(255,255,255,0.06);color:var(--accent-primary);">${INPUT_TYPE_LABELS[n.inputType] || 'ENTITY'}</span>
+                <span class="palette-item-text">${escapeHtml(n.label)}</span>
+                <span class="palette-item-action">Jump ↵</span>
+            </div>
+        `).join('');
+    }
+    
+    // Global Actions
+    const actions = [
+        { name: 'Run All Pivots on Selection', action: 'executeAllPivots()', badge: 'DEEP PIVOT' },
+        { name: 'Layout: Organic (Physics Settle)', action: "applyLayoutMode('organic')", badge: 'LAYOUT' },
+        { name: 'Layout: Hierarchical (Top-Down)', action: "applyLayoutMode('hierarchy')", badge: 'LAYOUT' },
+        { name: 'Layout: Horizontal (Left-Right)', action: "applyLayoutMode('horizontal')", badge: 'LAYOUT' },
+        { name: 'Layout: Radial Cluster', action: "applyLayoutMode('circular')", badge: 'LAYOUT' },
+        { name: 'Fit Graph to Viewport', action: 'network.fit({ animation: true })', badge: 'VIEW' },
+        { name: 'Export Markdown Investigation Report', action: 'exportMarkdownReport()', badge: 'EXPORT' },
+        { name: 'Export Graph Case (JSON)', action: 'exportGraph()', badge: 'EXPORT' },
+        { name: 'Capture PNG Graph Snapshot', action: 'captureGraphPNG()', badge: 'EXPORT' },
+        { name: 'Color Themes & Harmony', action: 'openThemeModal()', badge: 'THEME' },
+        { name: 'Clear Entire Graph', action: 'clearGraph()', badge: 'DANGER' }
+    ];
+    
+    const matchedActions = q ? actions.filter(a => a.name.toLowerCase().includes(q)) : actions;
+    if (matchedActions.length > 0) {
+        html += `<div class="palette-section-title">ACTIONS & WORKFLOWS</div>`;
+        html += matchedActions.map(a => `
+            <div class="palette-item" onclick="${a.action}; closeCommandPalette();">
+                <span class="palette-badge" style="background:rgba(255,255,255,0.06);color:var(--text-secondary);">${a.badge}</span>
+                <span class="palette-item-text">${a.name}</span>
+                <span class="palette-item-action">Run ↵</span>
+            </div>
+        `).join('');
+    }
+    
+    container.innerHTML = html;
+}
+
+function onCommandPaletteInput(val) {
+    renderCommandPaletteResults(val);
+}
+
+function onCommandPaletteKeydown(e) {
+    if (e.key === 'Escape') {
+        closeCommandPalette();
+    }
+}
+
+function selectAndFocusNode(nodeId) {
+    if (!network || !nodes) return;
+    selectedNode = nodeId;
+    network.selectNodes([nodeId]);
+    showRightPanel();
+    updatePivotOptionsForNode(nodeId);
+    network.focus(nodeId, {
+        scale: 1.2,
+        animation: {
+            duration: 600,
+            easingFunction: 'easeInOutQuad'
+        }
+    });
+}
+
+</script>
+
+    <!-- Command Palette Modal (⌘K / Ctrl+K) -->
+    <div class="modal-overlay" id="commandPaletteModal" onclick="if(event.target === this) closeCommandPalette()">
+        <div class="modal" style="max-width: 540px; padding: 0; overflow: hidden; background: var(--bg-panel); border: 1px solid var(--border-hover); box-shadow: var(--shadow-lg);">
+            <div style="padding: 12px 14px; border-bottom: 1px solid var(--border-color); display: flex; align-items: center; gap: 10px;">
+                <span style="color: var(--text-muted); font-size: 13px;">⌘</span>
+                <input type="text" id="commandPaletteInput" placeholder="Search entities or run action... (Esc to close)" style="flex: 1; background: transparent; border: none; outline: none; color: var(--text-primary); font-family: 'Geist', sans-serif; font-size: 13px;" oninput="onCommandPaletteInput(this.value)" onkeydown="onCommandPaletteKeydown(event)">
+                <span style="font-family: 'Geist Mono', monospace; font-size: 10px; color: var(--text-muted); background: rgba(255,255,255,0.06); padding: 2px 6px; border-radius: 4px;">ESC</span>
+            </div>
+            <div id="commandPaletteResults" style="max-height: 380px; overflow-y: auto; padding: 6px;"></div>
+        </div>
+    </div>
+
 </body>
 </html>

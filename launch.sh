@@ -5,10 +5,10 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
 echo "======================================================"
-echo "          TITAN SYSTEM : LAUNCHER"
+echo "          MIDINS TITAN : SYSTEM LAUNCHER"
 echo "======================================================"
 echo ""
-echo "[INFO] Emplacement : $SCRIPT_DIR"
+echo "[INFO] Working directory: $SCRIPT_DIR"
 echo ""
 
 # Find Python executable (checks local venv first, then system python)
@@ -21,18 +21,18 @@ elif command -v python3 >/dev/null 2>&1; then
 elif command -v python >/dev/null 2>&1; then
     PYTHON_CMD=python
 else
-    echo "❌ Erreur: Python non trouvé dans le PATH."
+    echo "❌ Error: Python not found in PATH."
     exit 1
 fi
 
-echo "[1/2] Démarrage du serveur Flask..."
+echo "[1/2] Starting Flask backend server..."
 $PYTHON_CMD app.py &
 SERVER_PID=$!
 
-# Attendre 2 secondes que le serveur s'initialise
+# Wait 2 seconds for server initialization
 sleep 2
 
-echo "[2/2] Ouverture de l'interface graphique..."
+echo "[2/2] Opening browser interface..."
 URL="http://127.0.0.1:5000"
 
 if command -v xdg-open >/dev/null 2>&1; then
@@ -40,14 +40,14 @@ if command -v xdg-open >/dev/null 2>&1; then
 elif command -v open >/dev/null 2>&1; then
     open "$URL" >/dev/null 2>&1 &
 else
-    echo "ℹ️  Veuillez ouvrir votre navigateur à l'adresse : $URL"
+    echo "ℹ️  Please open your browser at: $URL"
 fi
 
 echo ""
 echo "======================================================"
-echo "          TITAN EST PRÊT - BONNE ENQUÊTE"
+echo "          MIDINS TITAN IS READY"
 echo "======================================================"
-echo "Appuyez sur Ctrl+C pour arrêter le serveur."
+echo "Press Ctrl+C to stop the server."
 
 trap "kill $SERVER_PID 2>/dev/null; exit 0" SIGINT SIGTERM
 wait $SERVER_PID
